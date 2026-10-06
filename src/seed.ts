@@ -2,8 +2,11 @@
 import { db } from "./db";
 
 const site = "demo";
-db.prepare("DELETE FROM variants WHERE site = ?").run(site);
-
+const existing = db.prepare("SELECT COUNT(*) AS n FROM variants WHERE site = ?").get(site) as { n: number };
+if (existing.n > 0) {
+  console.log(`Site "${site}" already has ${existing.n} variants — skipping seed`);
+  process.exit(0);
+}
 const variants = [
   {
     name: "Bundle-buyer hero",
