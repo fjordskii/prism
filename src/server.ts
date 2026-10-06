@@ -32,10 +32,11 @@ app.use("/api/variants*", async (c, next) => {
         const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
         if (body?.site === "demo") { c.set("demoBody", body); return next(); }
       }
-      // toggle/delete allowed only for demo-site variants
-      const id = c.req.param("id");
-      if (id) {
-        const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(id) as { site: string } | null;
+      // toggle/delete allowed only for demo-site variants. Middleware runs before
+      // route matching, so extract the id from the path directly.
+      const m = c.req.path.match(/^\/api\/variants\/(\d+)/);
+      if (m) {
+        const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(Number(m[1])) as { site: string } | null;
         if (v?.site === "demo") return next();
       }
     }
