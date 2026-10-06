@@ -294,7 +294,7 @@ app.get("/privacy", (c) =>
 <h2>Your rights (GDPR / CCPA)</h2>
 <p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code> — removes their profile and every event. Both are token-gated (same auth as the dashboard). Full site export: <code>GET /api/export?site=…</code> (token-gated).</p>
 <h2>Retention &amp; subprocessors</h2>
-<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. Sole subprocessor: Fly.io. Contact: privacy@useprism.com.</p>`
+<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. Sole subprocessor: Fly.io. Contact: privacy@sundaymorning.software.</p>`
     )
   )
 );
