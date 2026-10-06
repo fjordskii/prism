@@ -24,23 +24,30 @@ per visitor: pre-approved content variants, rule-based audiences, a Bayesian ban
   (1M visitors, unlimited sites, white-label). Annual prepay: 2 months free,
   renewal price locked 12 months, overage never auto-bills.
 
-## Round-2 changes (new since you last looked — re-verify, don't trust this list)
+## Round-3 changes (verify live, don't trust this list)
 
-- Admin dashboard works with demo token: https://prism-personalize.fly.dev/admin?token=demo-panel-2026
-  (visual variant builder + 5 one-click DTC templates + scheduling; no raw JSON needed)
-- Stats API now returns real counts + 95% Wilson CIs + a control arm:
-  curl https://prism-personalize.fly.dev/api/stats?site=demo (30 days of demo data)
-- Holdout: 10% of eligible visitors per selector get control; dashboard shows
-  incremental lift vs holdout. HOLDOUT_PCT is configurable.
-- DSR endpoints: GET/DELETE /api/visitors/:id?site=… ; full export GET /api/export?site=…&token=demo-panel-2026
-- Variant scheduling: starts_at / ends_at — promos auto-expire (dashboard has datetime pickers).
-- Snippet: re-decides on SPA client-side navigation (pushState/popstate), re-applies
-  variants if a framework re-render clobbers them (innerHTML fingerprint + MutationObserver).
-- Anti-poisoning: conversions only recorded after a matching impression; optional
-  SITE_WRITE_KEY locks identify/events ingestion.
-- Trust pages: /privacy (DSR, retention, subprocessors), /security (serving model,
-  access control, data integrity), /terms (billing, availability, liability).
-- Conversion integrity: orphaned conversions are rejected server-side.
+- Demo token is now write-capable on the demo site ONLY: POST /api/variants with
+  `authorization: Bearer demo-panel-2026` and site:"demo" works; other sites 401.
+  Toggle/delete allowed for demo-site variants. Complete the authoring loop yourself.
+- Admin dashboard: Edit button on every variant (reopens builder pre-filled),
+  audience rules humanized in the table ("cartItems ≥ 3" not raw JSON).
+- Insert ops are idempotent: re-application after a framework re-render replaces
+  the old copy (tagged data-prism-owned), never duplicates. Verified against a
+  simulated React hydration clobber.
+- DSR endpoints are now token-gated (same auth as /admin): GET/DELETE
+  /api/visitors/:id?site=…&token=demo-panel-2026
+- Supply chain: immutable versioned snippet at /snippet.v1.js (max-age=1y,
+  immutable) with published SRI hash sha384-NZwm+IGHK1LRXSoFWVLaeUQjH0Es2Cbi9fmysYsv/zdm+QjcJDtpQ+2ybzL/1vFA;
+  or self-host the snippet from your own domain with data-host + data-cookie
+  overrides (white-label: custom API origin + custom cookie name).
+- Source-available: github.com/fjordskii/prism (BSL 1.1 → Apache 2.0 in 2030);
+  self-host with `bun run src/server.ts` or the Dockerfile.
+- /terms now has a real SLA: 99.9% monthly, 10x-downtime service credits, auto-applied.
+- Klaviyo snippet uses real Liquid fields (customer.orders_count, computed
+  lastOrderDays from customer.last_order.created_at) + a _learnq bridge that
+  forwards Klaviyo profile/segment membership into prism.identify.
+- Contact: hello@sundaymorning.software (working domain, Google MX). Entity:
+  Sunday Morning Software (Prism Labs).
 
 ## Artifacts to review (fetch and read them)
 

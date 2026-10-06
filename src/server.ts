@@ -163,6 +163,10 @@ app.post("/api/events", async (c) => {
   return c.json({ ok: true, recorded });
 });
 
+app.get("/api/sites", (c) => {
+  const rows = db.prepare("SELECT DISTINCT site FROM variants UNION SELECT DISTINCT site FROM events UNION SELECT DISTINCT site FROM visitors").all() as { site: string }[];
+  return c.json(rows.map((r) => r.site));
+});
 // ---------- admin CRUD ----------
 app.get("/api/variants", (c) => {
   const site = c.req.query("site") ?? "demo";

@@ -1,11 +1,15 @@
-Business Source License 1.1
+Business Source License 1.1 — Sunday Morning Software (Prism Labs)
 
-Licensor:             Prism Labs, Inc.
+Licensor:             Sunday Morning Software (Prism Labs)
 Licensed Work:        Prism — client-side personalization engine
                       (server, snippet, dashboard, and demo in this repository)
 Additional Use Grant: You may self-host the Licensed Work for your own internal
                       business purposes (including serving personalization on
                       websites you own or operate), at any scale.
+                      Additionally, active Agency-tier subscribers may operate the
+                      Licensed Work as a managed service for their own clients,
+                      under the subscriber's own brand (white-label), for the
+                      duration of the subscription.
 Change Date:          2030-10-06
 Change License:       Apache License, Version 2.0
 

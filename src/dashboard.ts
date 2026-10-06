@@ -51,10 +51,35 @@ export function dashboard(): string {
 </div>
 
 <script>
-const site = 'demo';
+let site = new URLSearchParams(location.search).get('site') || 'demo';
 const qs = new URLSearchParams(location.search);
 const token = qs.get('token');
-if (token) document.getElementById('export').href += '&token=' + token;
+async function loadSites() {
+  const sites = await fetch('/api/sites').then(r => r.json());
+  const picker = document.getElementById('sitePicker');
+  picker.innerHTML = '';
+  if (!sites.includes(site)) sites.push(site);
+  for (const s of sites.sort()) {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s; if (s === site) o.selected = true;
+    picker.appendChild(o);
+  }
+}
+document.getElementById('sitePicker').addEventListener('change', e => {
+  const p = new URLSearchParams(location.search);
+  p.set('site', e.target.value);
+  location.search = p.toString();
+});
+document.getElementById('addSite').addEventListener('click', () => {
+  const v = document.getElementById('newSite').value.trim();
+  if (!v) return;
+  const p = new URLSearchParams(location.search);
+  p.set('site', v);
+  location.search = p.toString();
+});
+function exportHref() { return '/api/export?site=' + site + (token ? '&token=' + token : ''); }
+document.getElementById('export').href = exportHref();
+document.getElementById('site').textContent = site;
 
 const TEMPLATES = [
   { name: 'Gift-buyer hero', selector: '#hero', field: 'intent', op: 'eq', value: 'gift',
@@ -165,7 +190,6 @@ async function toggle(id) { await authFetch('/api/variants/' + id + '/toggle', {
 async function del(id) { if (confirm('Delete variant?')) { await authFetch('/api/variants/' + id, { method: 'DELETE' }); load(); } }
 function authFetch(url, opts) {
   opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers, token ? { authorization: 'Bearer ' + token } : {});
   return fetch(url, opts);
 }
 document.getElementById('b-create').addEventListener('click', async () => {
@@ -188,7 +212,7 @@ document.getElementById('b-create').addEventListener('click', async () => {
   if (r.ok) setTimeout(() => document.getElementById('b-msg').textContent = '', 2000);
   load();
 });
-load(); setInterval(load, 5000);
+loadSites(); load(); setInterval(load, 5000);
 </script>
 </body></html>`;
 }
