@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prism — one site, every visitor</title>
+<meta name="description" content="Prism personalizes any website for every visitor. One script tag, pre-approved variants, a decision engine that learns. Live in a day.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #111312;
+    --paper: #fdfdfb;
+    --mute: #6d726e;
+    --hair: #e2e4df;
+    --r: #e5453c;   /* spectrum red    */
+    --o: #f08c1e;   /* spectrum orange */
+    --y: #e9c46a;   /* spectrum yellow */
+    --g: #2a9d6e;   /* spectrum green  */
+    --b: #3a6fd8;   /* spectrum blue   */
+    --v: #7b5ea7;   /* spectrum violet */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font: 400 16px/1.6 "IBM Plex Sans", system-ui, sans-serif;
+    background: var(--paper); color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--y); }
+  a { color: inherit; }
+  code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 22px 0; border-bottom: 1px solid var(--hair);
+  }
+  .wordmark { font-weight: 600; font-size: 17px; letter-spacing: .02em; text-decoration: none; }
+  .wordmark em { font-style: normal; color: var(--b); }
+  nav .links { display: flex; gap: 28px; font-size: 14px; }
+  nav .links a { text-decoration: none; color: var(--mute); }
+  nav .links a:hover { color: var(--ink); }
+  nav .cta-nav {
+    font-size: 14px; font-weight: 500; text-decoration: none;
+    border: 1px solid var(--ink); padding: 7px 16px; border-radius: 3px;
+  }
+  nav .cta-nav:hover { background: var(--ink); color: var(--paper); }
+
+  /* ---------- hero ---------- */
+  header.hero { padding: 96px 0 72px; border-bottom: 1px solid var(--hair); }
+  .hero h1 {
+    font-size: clamp(40px, 6vw, 68px); font-weight: 500;
+    line-height: 1.05; letter-spacing: -0.02em; max-width: 14ch;
+  }
+  .hero .sub {
+    margin-top: 24px; max-width: 46ch; font-size: 18px; color: var(--mute); font-weight: 300;
+  }
+  .hero .actions { margin-top: 36px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    font: 500 15px "IBM Plex Sans", sans-serif; text-decoration: none;
+    padding: 12px 24px; border-radius: 3px; border: 1px solid var(--ink);
+  }
+  .btn.solid { background: var(--ink); color: var(--paper); }
+  .btn.solid:hover { background: #2a2d2b; }
+  .btn.ghost:hover { background: #f0f0ec; }
+
+  /* the prism diagram — the one bold element */
+  .prism-fig { margin-top: 72px; }
+  .prism-fig svg { width: 100%; height: auto; display: block; }
+  .prism-fig figcaption {
+    margin-top: 14px; font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .beam-in { stroke-dasharray: 6 5; animation: beam 1.2s linear infinite; }
+    @keyframes beam { to { stroke-dashoffset: -11; } }
+    .band { animation: bandin 1.4s cubic-bezier(.16,1,.3,1) both; transform-origin: 470px 130px; }
+    .band:nth-of-type(2) { animation-delay: .10s } .band:nth-of-type(3) { animation-delay: .20s }
+    .band:nth-of-type(4) { animation-delay: .30s } .band:nth-of-type(5) { animation-delay: .40s }
+    .band:nth-of-type(6) { animation-delay: .50s }
+    @keyframes bandin { from { opacity: 0; transform: scaleX(.2) } to { opacity: 1; transform: scaleX(1) } }
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 88px 0; border-bottom: 1px solid var(--hair); }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--mute);
+    margin-bottom: 18px;
+  }
+  h2 { font-size: clamp(28px, 3.4vw, 40px); font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; max-width: 22ch; }
+  .lede { margin-top: 16px; max-width: 52ch; color: var(--mute); font-size: 17px; font-weight: 300; }
+
+  /* how it works — a real sequence, so numbered */
+  ol.steps { list-style: none; padding: 0; margin-top: 56px; counter-reset: step; }
+  ol.steps li {
+    counter-increment: step; display: grid; grid-template-columns: 72px 1fr 1.2fr;
+    gap: 32px; padding: 28px 0; border-top: 1px solid var(--hair); align-items: baseline;
+  }
+  ol.steps li::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: "IBM Plex Mono", monospace; font-size: 14px; color: var(--b);
+  }
+  ol.steps h3 { font-size: 19px; font-weight: 500; }
+  ol.steps p { color: var(--mute); font-size: 15px; }
+  @media (max-width: 720px) { ol.steps li { grid-template-columns: 48px 1fr; } ol.steps p { grid-column: 2; } }
+
+  /* snippet */
+  .snippet {
+    margin-top: 40px; background: var(--ink); color: #d8dbd6; border-radius: 4px;
+    padding: 24px 28px; font-size: 14px; overflow-x: auto; line-height: 1.7;
+  }
+  .snippet .c { color: #6d726e; }
+  .snippet .s { color: var(--y); }
+  .snippet .a { color: #8fb4f0; }
+
+  /* proof strip */
+  .proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 56px; border: 1px solid var(--hair); }
+  .proof > div { padding: 28px; border-right: 1px solid var(--hair); }
+  .proof > div:last-child { border-right: 0; }
+  .proof .n { font-size: 34px; font-weight: 500; letter-spacing: -0.02em; }
+  .proof .l { font-size: 13px; color: var(--mute); margin-top: 6px; font-family: "IBM Plex Mono", monospace; }
+  @media (max-width: 720px) { .proof { grid-template-columns: 1fr; } .proof > div { border-right: 0; border-bottom: 1px solid var(--hair); } }
+
+  /* split table: what it is / isn't */
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; margin-top: 48px; }
+  @media (max-width: 720px) { .twocol { grid-template-columns: 1fr; gap: 32px; } }
+  .twocol h3 { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+  .twocol ul { padding-left: 18px; color: var(--mute); font-size: 15px; }
+  .twocol li { margin-bottom: 8px; }
+  .twocol li::marker { color: var(--g); }
+  .twocol .isnt li::marker { color: var(--r); }
+
+  /* pricing */
+  .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px; }
+  @media (max-width: 720px) { .price-grid { grid-template-columns: 1fr; } }
+  .tier { border: 1px solid var(--hair); padding: 32px 28px; border-radius: 4px; display: flex; flex-direction: column; }
+  .tier.hot { border-color: var(--ink); }
+  .tier h3 { font-size: 17px; font-weight: 600; }
+  .tier .amount { font-size: 36px; font-weight: 500; margin: 14px 0 4px; letter-spacing: -0.02em; }
+  .tier .per { font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace; }
+  .tier ul { list-style: none; padding: 0; margin: 24px 0 28px; font-size: 14px; color: var(--mute); flex: 1; }
+  .tier li { padding: 6px 0; border-top: 1px solid var(--hair); }
+  .tier .btn { text-align: center; }
+
+  /* faq */
+  details { border-top: 1px solid var(--hair); padding: 20px 0; }
+  details:last-of-type { border-bottom: 1px solid var(--hair); }
+  summary { cursor: pointer; font-weight: 500; font-size: 16px; list-style: none; display: flex; justify-content: space-between; align-items: baseline; }
+  summary::after { content: "+"; font-family: "IBM Plex Mono", monospace; color: var(--mute); }
+  details[open] summary::after { content: "–"; }
+  details p { margin-top: 12px; color: var(--mute); max-width: 60ch; font-size: 15px; }
+
+  /* final cta */
+  .final { text-align: left; padding: 120px 0; }
+  .final h2 { max-width: 18ch; }
+
+  footer { padding: 40px 0 56px; font-size: 13px; color: var(--mute); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--mute); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <a class="wordmark" href="/landing/">Prism<em>.</em></a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a href="/" target="_blank">Live demo</a>
+    </div>
+    <a class="cta-nav" href="#install">Install</a>
+  </nav>
+
+  <header class="hero">
+    <h1>One site. Every visitor.</h1>
+    <p class="sub">
+      Prism splits your website the way a prism splits light: one beam in, a spectrum out.
+      Each visitor gets the version most likely to convert them — decided in under a
+      millisecond from a warm cache, rendered after first paint.
+    </p>
+    <div class="actions">
+      <a class="btn solid" href="#install">Install the snippet</a>
+      <a class="btn ghost" href="/" target="_blank">See the live demo</a>
+    </div>
+
+    <figure class="prism-fig">
+      <svg viewBox="0 0 1080 260" role="img" aria-label="A beam of white light enters a prism and exits as six colored bands, each labeled with a visitor persona.">
+        <!-- incoming beam -->
+        <line class="beam-in" x1="40" y1="130" x2="330" y2="130" stroke="#111312" stroke-width="2.5"/>
+        <text x="40" y="112" font-family="IBM Plex Mono" font-size="13" fill="#6d726e">your website</text>
+        <!-- prism -->
+        <polygon points="360,40 470,220 250,220" fill="none" stroke="#111312" stroke-width="2.5" stroke-linejoin="round"/>
+        <text x="330" y="248" font-family="IBM Plex Mono" font-size="13" fill="#6d726e">prism</text>
+        <!-- spectrum bands -->
+        <g stroke-width="7" stroke-linecap="round">
+          <line class="band" x1="470" y1="118" x2="880" y2="48"  stroke="#e5453c"/>
+          <line class="band" x1="470" y1="122" x2="880" y2="82"  stroke="#f08c1e"/>
+          <line class="band" x1="470" y1="126" x2="880" y2="116" stroke="#e9c46a"/>
+          <line class="band" x1="470" y1="130" x2="880" y2="150" stroke="#2a9d6e"/>
+          <line class="band" x1="470" y1="134" x2="880" y2="184" stroke="#3a6fd8"/>
+          <line class="band" x1="470" y1="138" x2="880" y2="218" stroke="#7b5ea7"/>
+        </g>
+        <g font-family="IBM Plex Sans" font-size="14" fill="#111312">
+          <text x="896" y="52">gift buyer</text>
+          <text x="896" y="86">bundle builder</text>
+          <text x="896" y="120">returning customer</text>
+          <text x="896" y="154">category browser</text>
+          <text x="896" y="188">first-time visitor</text>
+          <text x="896" y="222">…your segments</text>
+        </g>
+      </svg>
+      <figcaption>fig. 1 — one page in, the right version out. Variants are pre-approved by you; the engine only chooses.</figcaption>
+    </figure>
+  </header>
+
+  <section id="video" style="padding-top:64px">
+    <p class="kicker">Two minutes</p>
+    <h2>Watch a page become five</h2>
+    <div style="margin-top:40px;border:1px solid var(--hair);border-radius:4px;overflow:hidden">
+      <video src="/landing/prism-demo.mp4" controls preload="metadata" style="width:100%;display:block" aria-label="Prism demo: one site personalized for five visitor segments"></video>
+    </div>
+  </section>
+
+  <section id="how">
+    <p class="kicker">How it works</p>
+    <h2>Three steps. No redesign, no migration, no model in the request path.</h2>
+    <ol class="steps">
+      <li>
+        <h3>Paste one line</h3>
+        <p>A 6&nbsp;KB script tag, loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress — anything that serves HTML.</p>
+      </li>
+      <li>
+        <h3>Approve the variants</h3>
+        <p>You (or your AI agent, over the API) write the alternates: a gift-shopper hero, a subscribe-and-save strip, a re-sorted catalog. Prism never invents content at request time — it only chooses among what you approved.</p>
+      </li>
+      <li>
+        <h3>It learns who converts</h3>
+        <p>Every impression and conversion feeds a Bayesian bandit. Winning variants earn more traffic automatically; losers fade out. No test babysitting, no significance calculators.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="install">
+    <p class="kicker">Install</p>
+    <h2>The whole integration</h2>
+    <pre class="snippet"><span class="c">&lt;!-- in your &lt;head&gt;, once --&gt;</span>
+&lt;script defer src=<span class="s">"https://prism-personalize.fly.dev/snippet.js"</span> data-site=<span class="s">"yourstore"</span>&gt;&lt;/script&gt;
+
+<span class="c">// tell Prism who this visitor is, from data you already have</span>
+<span class="a">prism</span>.identify({ orders: 3, lastOrderDays: 32, intent: <span class="s">"gift"</span> });
+
+<span class="c">&lt;!-- mark the buttons that count as conversions --&gt;</span>
+&lt;button data-prism-convert=<span class="s">"#hero"</span>&gt;Add to cart&lt;/button&gt;</pre>
+    <div class="proof">
+      <div><div class="n">&lt;1 ms</div><div class="l">warm-cache decision time</div></div>
+      <div><div class="n">6 KB</div><div class="l">snippet, zero dependencies</div></div>
+      <div><div class="n">1 day</div><div class="l">from paste to first live variant</div></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="kicker">What to expect</p>
+    <h2>Opinionated on purpose</h2>
+    <div class="twocol">
+      <div>
+        <h3>What Prism does</h3>
+        <ul>
+          <li>Swaps, inserts, reorders, or removes page sections per visitor segment</li>
+          <li>Remembers visitors in a first-party cookie — no fingerprinting, works with consent banners</li>
+          <li>Shifts traffic to winning variants automatically, per segment</li>
+          <li>Runs after first paint — your Lighthouse score is untouched</li>
+          <li>Lets your AI agent author and manage variants through the same API you use</li>
+        </ul>
+      </div>
+      <div class="isnt">
+        <h3>What it never does</h3>
+        <ul>
+          <li>Generate copy or designs on the fly — only your approved variants ship</li>
+          <li>Block rendering or flash personalized content before paint</li>
+          <li>Require a redesign, a migration, or a CMS</li>
+          <li>Put a model in the request path — decisions are rules plus statistics</li>
+          <li>Lock your data in — visitors, variants, and events are yours to export</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <p class="kicker">Pricing</p>
+    <h2>Free until it proves itself</h2>
+    <p class="lede">Run Prism in shadow mode for a week: it tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on.</p>
+    <div class="price-grid">
+      <div class="tier">
+        <h3>Shadow</h3>
+        <div class="amount">$0</div>
+        <div class="per">forever</div>
+        <ul>
+          <li>Up to 10k visitors / mo</li>
+          <li>Segment discovery + projected lift</li>
+          <li>1 site</li>
+          <li>Community support</li>
+        </ul>
+        <a class="btn ghost" href="/admin" target="_blank">Start free</a>
+      </div>
+      <div class="tier hot">
+        <h3>Growth</h3>
+        <div class="amount">$79</div>
+        <div class="per">per month</div>
+        <ul>
+          <li>Up to 100k visitors / mo</li>
+          <li>Live personalization + bandit optimization</li>
+          <li>3 sites</li>
+          <li>Agent API access</li>
+          <li>Email support</li>
+        </ul>
+        <a class="btn solid" href="/admin" target="_blank">Start growing</a>
+      </div>
+      <div class="tier">
+        <h3>Agency</h3>
+        <div class="amount">$299</div>
+        <div class="per">per month</div>
+        <ul>
+          <li>1M visitors / mo</li>
+          <li>Unlimited sites, one dashboard</li>
+          <li>Client workspaces</li>
+          <li>Priority support</li>
+        </ul>
+        <a class="btn ghost" href="mailto:hello@example.com">Talk to us</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <p class="kicker">FAQ</p>
+    <h2>Questions</h2>
+    <div style="margin-top:32px">
+      <details>
+        <summary>Will it slow my site down?</summary>
+        <p>No. The snippet loads deferred and applies changes after first paint. Repeat visits are served from a local cache, so the decision costs zero network time.</p>
+      </details>
+      <details>
+        <summary>Do visitors see a flash of the wrong content?</summary>
+        <p>First-ever pageview can show the default briefly — by design, since we never block paint. Every visit after that applies the cached decision before the frame is visible.</p>
+      </details>
+      <details>
+        <summary>Does it use AI to write my copy?</summary>
+        <p>Only if you want it to. An AI agent can draft variants through the API, but nothing reaches a visitor until it exists as an approved variant. The serving path contains no model at all.</p>
+      </details>
+      <details>
+        <summary>How is this different from an A/B testing tool?</summary>
+        <p>A/B tools split traffic randomly and wait for you to call a winner. Prism splits by visitor segment and continuously reallocates traffic to winners per segment — the test runs and resolves itself.</p>
+      </details>
+      <details>
+        <summary>What platforms does it work with?</summary>
+        <p>Anything that serves HTML and lets you add a script tag: Shopify, Webflow, Framer, WordPress, Squarespace, Wix, Next.js, custom stacks.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="final" style="border-bottom:0">
+    <p class="kicker">Get started</p>
+    <h2>Your next visitor is not your average visitor.</h2>
+    <p class="lede">Paste the snippet, watch the segments appear, turn on your first variant today.</p>
+    <div class="actions" style="margin-top:32px;display:flex;gap:14px">
+      <a class="btn solid" href="#install">Install the snippet</a>
+      <a class="btn ghost" href="/" target="_blank">Try the live demo</a>
+    </div>
+  </section>
+
+  <footer>
+    <span>Prism — personalize every visit.</span>
+    <span><a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@example.com">Contact</a></span>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -5,6 +5,7 @@ RUN bun install --frozen-lockfile --production || bun install --production
 COPY src ./src
 COPY public ./public
 COPY demo ./demo
+COPY landing ./landing
 ENV PORT=3000
 ENV DB_PATH=/data/prism.db
 EXPOSE 3000

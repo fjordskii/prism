@@ -9,6 +9,22 @@ import { dashboard } from "./dashboard";
 const app = new Hono();
 app.use("/api/*", cors());
 
+// Admin auth: Bearer token on mutating/admin routes. Set ADMIN_TOKEN in env.
+// Public (no auth): /api/identify, /api/decide, /api/events — the snippet's runtime surface.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+app.use("/api/variants*", async (c, next) => {
+  if (c.req.method === "GET") return next(); // read-only listing stays open for the dashboard demo
+  if (!ADMIN_TOKEN) return next();           // local dev without token = open
+  if (c.req.header("authorization") !== `Bearer ${ADMIN_TOKEN}`) return c.json({ error: "unauthorized" }, 401);
+  return next();
+});
+app.use("/admin", async (c, next) => {
+  if (!ADMIN_TOKEN) return next();
+  const ok = c.req.header("authorization") === `Bearer ${ADMIN_TOKEN}` || c.req.query("token") === ADMIN_TOKEN;
+  if (!ok) return c.text("Unauthorized — pass ?token= or an Authorization: Bearer header.", 401);
+  return next();
+});
+
 // ---------- visitor upsert ----------
 const getVisitor = db.prepare("SELECT * FROM visitors WHERE id = ? AND site = ?");
 const insVisitor = db.prepare(
@@ -120,7 +136,14 @@ app.get("/api/stats", (c) => {
 
 // ---------- dashboard + static ----------
 app.get("/admin", (c) => c.html(dashboard()));
+// Snippet: long cache + immutable-ish; it only changes on deploy, and cache-bust via ?v= if needed.
+app.use("/snippet.js", async (c, next) => {
+  await next();
+  c.header("cache-control", "public, max-age=3600, stale-while-revalidate=86400");
+});
 app.use("/snippet.js", serveStatic({ path: "./public/snippet.js" }));
+app.use("/landing/*", serveStatic({ root: "./landing", rewriteRequestPath: (p) => p.replace(/^\/landing/, "") || "/index.html" }));
+app.get("/landing", (c) => c.redirect("/landing/"));
 app.use("/*", serveStatic({ root: "./demo" }));
 
 export default app;
