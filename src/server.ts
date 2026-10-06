@@ -12,16 +12,32 @@ app.use("/api/*", cors());
 // Admin auth: Bearer token on mutating/admin routes. Set ADMIN_TOKEN in env.
 // Public (no auth): /api/identify, /api/decide, /api/events — the snippet's runtime surface.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+const DEMO_TOKEN = process.env.DEMO_TOKEN; // read-only demo access for prospects
+function authorized(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }, allowDemo = false) {
+  if (!ADMIN_TOKEN) return true;
+  const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+  if (tok === ADMIN_TOKEN) return true;
+  if (allowDemo && DEMO_TOKEN && tok === DEMO_TOKEN) return true;
+  return false;
+}
 app.use("/api/variants*", async (c, next) => {
-  if (c.req.method === "GET") return next(); // read-only listing stays open for the dashboard demo
-  if (!ADMIN_TOKEN) return next();           // local dev without token = open
-  if (c.req.header("authorization") !== `Bearer ${ADMIN_TOKEN}`) return c.json({ error: "unauthorized" }, 401);
+  if (c.req.method === "GET") return next();
+  if (!authorized(c)) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 app.use("/admin", async (c, next) => {
-  if (!ADMIN_TOKEN) return next();
-  const ok = c.req.header("authorization") === `Bearer ${ADMIN_TOKEN}` || c.req.query("token") === ADMIN_TOKEN;
-  if (!ok) return c.text("Unauthorized — pass ?token= or an Authorization: Bearer header.", 401);
+  if (!authorized(c, true)) return c.text("Unauthorized — pass ?token= or an Authorization: Bearer header.", 401);
+  return next();
+});
+
+// Optional anti-poisoning write key: if SITE_WRITE_KEY is set, snippet calls must carry it.
+const WRITE_KEY = process.env.SITE_WRITE_KEY;
+app.use("/api/identify", async (c, next) => {
+  if (WRITE_KEY && c.req.header("x-prism-key") !== WRITE_KEY) return c.json({ error: "bad write key" }, 401);
+  return next();
+});
+app.use("/api/events", async (c, next) => {
+  if (WRITE_KEY && c.req.header("x-prism-key") !== WRITE_KEY) return c.json({ error: "bad write key" }, 401);
   return next();
 });
 
@@ -46,18 +62,26 @@ app.post("/api/identify", async (c) => {
 });
 
 // ---------- decision ----------
+// Holdout: HOLDOUT_PCT of visitors per selector get control (no variant) but are still
+// tracked with variant_id=null so /api/stats can report true incremental lift.
+const HOLDOUT_PCT = Number(process.env.HOLDOUT_PCT ?? 10);
+
 app.post("/api/decide", async (c) => {
   const body = await c.req.json<{ visitorId: string; site: string; selectors?: string[] }>();
   if (!body.visitorId || !body.site) return c.json({ error: "visitorId and site required" }, 400);
 
   const visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
   const traits: Record<string, unknown> = visitor ? JSON.parse(visitor.traits) : {};
+  const now = Date.now();
 
   const variants = db
-    .prepare("SELECT * FROM variants WHERE site = ? AND active = 1")
-    .all(body.site) as Variant[];
+    .prepare(
+      `SELECT * FROM variants WHERE site = ? AND active = 1
+       AND (starts_at IS NULL OR starts_at <= ?)
+       AND (ends_at IS NULL OR ends_at > ?)`
+    )
+    .all(body.site, now, now) as Variant[];
 
-  // Group by selector; within each selector pick the best-matching variant by bandit score.
   const bySelector = new Map<string, Variant[]>();
   for (const v of variants) {
     if (body.selectors?.length && !body.selectors.includes(v.selector)) continue;
@@ -66,17 +90,32 @@ app.post("/api/decide", async (c) => {
     bySelector.set(v.selector, [...(bySelector.get(v.selector) ?? []), v]);
   }
 
-  const decisions = [...bySelector.entries()].map(([selector, cands]) => {
+  // Deterministic holdout per visitor+selector so a visitor doesn't flip in/out.
+  const holdout = (selector: string) => {
+    let h = 0;
+    const s = body.visitorId + ":" + selector;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 100 < HOLDOUT_PCT;
+  };
+
+  const decisions: { selector: string; variantId: number | null; name: string; ops: unknown[]; control?: boolean }[] = [];
+  for (const [selector, cands] of bySelector) {
+    if (holdout(selector)) {
+      decisions.push({ selector, variantId: null, name: "control", ops: [], control: true });
+      continue;
+    }
     const scored = cands.map((v) => ({ v, s: banditScore(v.id, v.weight) }));
     scored.sort((a, b) => b.s - a.s);
     const winner = scored[0]!.v;
-    return { selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops) };
-  });
+    decisions.push({ selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops) });
+  }
 
   return c.json({ decisions, traits });
 });
 
 // ---------- events ----------
+// Integrity: a conversion is only recorded if this visitor has an impression for the
+// same variant+selector — kills orphaned conversions and most casual poisoning.
 app.post("/api/events", async (c) => {
   const body = await c.req.json<{
     site: string;
@@ -87,12 +126,23 @@ app.post("/api/events", async (c) => {
   const stmt = db.prepare(
     "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES (?, ?, ?, ?, ?, ?)"
   );
+  const hasImp = db.prepare(
+    `SELECT 1 FROM events WHERE site = ? AND visitor_id = ? AND selector = ?
+     AND type = 'impression' AND (variant_id IS ? OR variant_id = ?) LIMIT 1`
+  );
   const now = Date.now();
+  let recorded = 0;
   const tx = db.transaction(() => {
-    for (const e of body.events) stmt.run(body.site, body.visitorId, e.variantId, e.selector, e.type, now);
+    for (const e of body.events) {
+      if (e.type === "conversion" && e.variantId != null) {
+        if (!hasImp.get(body.site, body.visitorId, e.selector, e.variantId, e.variantId)) continue;
+      }
+      stmt.run(body.site, body.visitorId, e.variantId, e.selector, e.type, now);
+      recorded++;
+    }
   });
   tx();
-  return c.json({ ok: true, recorded: body.events.length });
+  return c.json({ ok: true, recorded });
 });
 
 // ---------- admin CRUD ----------
@@ -105,8 +155,14 @@ app.post("/api/variants", async (c) => {
   const b = await c.req.json<Partial<Variant> & { site: string; name: string; selector: string }>();
   if (!b.site || !b.name || !b.selector) return c.json({ error: "site, name, selector required" }, 400);
   const r = db
-    .prepare("INSERT INTO variants (site, name, selector, ops, audience, weight, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(b.site, b.name, b.selector, b.ops ?? "[]", b.audience ?? "{}", b.weight ?? 1, b.active ?? 1, Date.now());
+    .prepare(
+      `INSERT INTO variants (site, name, selector, ops, audience, weight, starts_at, ends_at, active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      b.site, b.name, b.selector, b.ops ?? "[]", b.audience ?? "[]",
+      b.weight ?? 1, b.starts_at ?? null, b.ends_at ?? null, b.active ?? 1, Date.now()
+    );
   return c.json({ id: r.lastInsertRowid }, 201);
 });
 
@@ -120,19 +176,137 @@ app.delete("/api/variants/:id", (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- stats ----------
+// Wilson score interval (95%) so rates come with honest uncertainty.
+function wilson(conv: number, imp: number): [number, number] | null {
+  if (imp === 0) return null;
+  const z = 1.96, p = conv / imp;
+  const denom = 1 + (z * z) / imp;
+  const center = (p + (z * z) / (2 * imp)) / denom;
+  const spread = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * imp)) / imp)) / denom;
+  return [Math.max(0, center - spread), Math.min(1, center + spread)];
+}
+
 app.get("/api/stats", (c) => {
   const site = c.req.query("site") ?? "demo";
   const rows = db
     .prepare(
-      `SELECT v.id, v.name, v.selector, v.active,
-              SUM(e.type='impression') AS impressions,
-              SUM(e.type='conversion') AS conversions
+      `SELECT v.id, v.name, v.selector, v.active, v.starts_at, v.ends_at,
+              COALESCE(SUM(e.type='impression'), 0) AS impressions,
+              COALESCE(SUM(e.type='conversion'), 0) AS conversions
        FROM variants v LEFT JOIN events e ON e.variant_id = v.id
        WHERE v.site = ? GROUP BY v.id ORDER BY v.id`
     )
-    .all(site);
-  return c.json(rows);
+    .all(site) as { id: number; name: string; selector: string; active: number; starts_at: number | null; ends_at: number | null; impressions: number; conversions: number }[];
+
+  const control = db
+    .prepare(
+      `SELECT COALESCE(SUM(type='impression'),0) AS impressions,
+              COALESCE(SUM(type='conversion'),0) AS conversions
+       FROM events WHERE site = ? AND variant_id IS NULL`
+    )
+    .get(site) as { impressions: number; conversions: number };
+
+  const withCI = rows.map((r) => ({
+    ...r,
+    rate: r.impressions ? r.conversions / r.impressions : null,
+    ci95: wilson(r.conversions, r.impressions),
+  }));
+  return c.json({
+    variants: withCI,
+    control: {
+      ...control,
+      rate: control.impressions ? control.conversions / control.impressions : null,
+      ci95: wilson(control.conversions, control.impressions),
+    },
+    holdoutPct: HOLDOUT_PCT,
+  });
 });
+
+// ---------- export / DSR ----------
+app.get("/api/export", (c) => {
+  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
+  const site = c.req.query("site") ?? "demo";
+  return c.json({
+    site,
+    exportedAt: new Date().toISOString(),
+    variants: db.prepare("SELECT * FROM variants WHERE site = ?").all(site),
+    events: db.prepare("SELECT * FROM events WHERE site = ? ORDER BY ts").all(site),
+    visitors: db.prepare("SELECT * FROM visitors WHERE site = ?").all(site),
+  });
+});
+
+// GDPR/CCPA: export or erase one visitor across visitors+events.
+app.get("/api/visitors/:id", (c) => {
+  const site = c.req.query("site") ?? "demo";
+  return c.json({
+    visitor: getVisitor.get(c.req.param("id"), site) ?? null,
+    events: db.prepare("SELECT * FROM events WHERE visitor_id = ? AND site = ?").all(c.req.param("id"), site),
+  });
+});
+app.delete("/api/visitors/:id", (c) => {
+  const site = c.req.query("site") ?? "demo";
+  const id = c.req.param("id");
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM events WHERE visitor_id = ? AND site = ?").run(id, site);
+    db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
+  });
+  tx();
+  return c.json({ ok: true, deleted: id });
+});
+
+// ---------- trust pages ----------
+const trustPage = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${title} — Prism</title>
+<style>body{font:15px/1.7 -apple-system,system-ui,sans-serif;max-width:720px;margin:48px auto;padding:0 20px;color:#1a1a1a}h1{font-size:24px}h2{font-size:17px;margin-top:28px}code{background:#f0f0ec;padding:1px 5px;border-radius:4px}</style></head>
+<body><h1>${title}</h1>${body}<p style="margin-top:40px;color:#777"><a href="/landing/">← Prism</a></p></body></html>`;
+
+app.get("/privacy", (c) =>
+  c.html(
+    trustPage(
+      "Privacy",
+      `<h2>What we store</h2>
+<p>Per visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and traits the host site explicitly sends via <code>prism.identify()</code>. Per event: variant shown, selector, impression/conversion, timestamp.</p>
+<h2>What we never do</h2>
+<p>No fingerprinting, no third-party cookies, no cross-site tracking, no sale or sharing of data. Events stay on the site's own first-party context.</p>
+<h2>Your rights (GDPR / CCPA)</h2>
+<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code> — removes their profile and every event. Full site export: <code>GET /api/export?site=…</code> (token-gated).</p>
+<h2>Retention &amp; subprocessors</h2>
+<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. Sole subprocessor: Fly.io. Contact: privacy@useprism.com.</p>`
+    )
+  )
+);
+
+app.get("/security", (c) =>
+  c.html(
+    trustPage(
+      "Security",
+      `<h2>Serving model</h2>
+<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, wraps every DOM op in try/catch, and fails open — if Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code.</p>
+<h2>Access control</h2>
+<p>Variant writes, the dashboard, and exports are gated by a Bearer token. Read-only demo access uses a separate token. Optional per-site write key (<code>SITE_WRITE_KEY</code>) locks the identify/events ingestion against event poisoning.</p>
+<h2>Data integrity</h2>
+<p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% Wilson confidence intervals. A deterministic holdout arm (default 10% per selector) preserves a control group for true incremental lift.</p>
+<h2>Data flows</h2>
+<p>Browser → Prism API (HTTPS only, HSTS via Fly edge) → SQLite on an encrypted Fly volume. No data leaves that path. DSR endpoints documented at <a href="/privacy">/privacy</a>.</p>`
+    )
+  )
+);
+
+app.get("/terms", (c) =>
+  c.html(
+    trustPage(
+      "Terms",
+      `<h2>Service</h2>
+<p>Prism provides client-side website personalization as hosted software. Plans: Shadow ($0, 10k visitors/mo, no personalization), Growth ($79/mo, 100k visitors/mo, 3 sites), Pro ($179/mo, 500k visitors/mo, 5 sites), Agency ($299/mo, 1M visitors/mo, unlimited sites, white-label).</p>
+<h2>Billing</h2>
+<p>Annual prepay: 2 months free (pay 10, get 12). Renewal price locked for 12 months. Overage: service continues; we contact you to right-size before any charge. Cancel anytime; you keep a full data export (<code>/api/export</code>).</p>
+<h2>Availability</h2>
+<p>Best-effort on Shadow; 99.9% monthly target on paid plans. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
+<h2>Liability</h2>
+<p>You approve every variant; Prism never generates visitor-facing content at request time. Standard SaaS liability cap: fees paid in the trailing 12 months.</p>`
+    )
+  )
+);
 
 // ---------- dashboard + static ----------
 app.get("/admin", (c) => c.html(dashboard()));

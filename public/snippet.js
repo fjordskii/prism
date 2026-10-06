@@ -1,12 +1,14 @@
 /* Prism snippet — one line install:
    <script defer src="https://YOUR_HOST/snippet.js" data-site="yoursite"></script>
    Identity in a first-party cookie, decisions from /api/decide, DOM ops applied
-   post-paint, impressions + conversions beaconed back. */
+   post-paint, impressions + conversions beaconed back. SPA-aware: re-decides on
+   client-side navigation and re-applies variants if the framework re-renders. */
 (function () {
   "use strict";
   var script = document.currentScript;
   var origin = new URL(script.src).origin;
   var site = script.getAttribute("data-site") || location.hostname;
+  var writeKey = script.getAttribute("data-key") || null; // optional anti-poisoning key
 
   // ---- identity: first-party cookie, 400 days ----
   function getCookie(n) {
@@ -58,19 +60,25 @@
   function track(variantId, selector, type) {
     pending.push({ variantId: variantId, selector: selector, type: type });
   }
+  function headers(extra) {
+    var h = { "content-type": "application/json" };
+    if (writeKey) h["x-prism-key"] = writeKey;
+    for (var k in extra) h[k] = extra[k];
+    return h;
+  }
   function flush(sync) {
     if (!pending.length) return;
     var payload = JSON.stringify({ site: site, visitorId: vid, events: pending.splice(0) });
     if (sync && navigator.sendBeacon) {
       navigator.sendBeacon(origin + "/api/events", new Blob([payload], { type: "application/json" }));
     } else {
-      fetch(origin + "/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: payload, keepalive: true }).catch(function () {});
+      fetch(origin + "/api/events", { method: "POST", headers: headers(), body: payload, keepalive: true }).catch(function () {});
     }
   }
   addEventListener("pagehide", function () { flush(true); });
   setInterval(flush, 5000);
 
-  // ---- conversions: any element marked data-prism-convert, else clicks on personalized regions ----
+  // ---- conversions: any element marked data-prism-convert ----
   document.addEventListener("click", function (e) {
     var t = e.target.closest("[data-prism-convert]");
     if (t) {
@@ -79,36 +87,64 @@
     }
   }, true);
 
-  var applied = []; // {selector, variantId, el}
+  var applied = []; // {selector, variantId, el, ops}
   function currentVariantFor(el) {
-    for (var i = 0; i < applied.length; i++) if (applied[i].el.contains(el)) return applied[i].variantId;
+    for (var i = 0; i < applied.length; i++) if (applied[i].el && applied[i].el.contains(el)) return applied[i].variantId;
     return null;
   }
   function guessSelector(el) {
-    for (var i = 0; i < applied.length; i++) if (applied[i].el.contains(el)) return applied[i].selector;
+    for (var i = 0; i < applied.length; i++) if (applied[i].el && applied[i].el.contains(el)) return applied[i].selector;
     return el.id ? "#" + el.id : el.tagName.toLowerCase();
   }
 
+  window.__prismApplied = applied; // debug/introspection handle
+
   function applyDecisions(decisions) {
     decisions.forEach(function (d) {
+      if (d.control) { track(null, d.selector, "impression"); return; } // holdout: measure, don't touch
       var el = document.querySelector(d.selector);
       if (!el) return;
+      if (el.getAttribute("data-prism-variant") === String(d.variantId)) return; // already applied
       applyOps(el, d.ops);
       el.setAttribute("data-prism-variant", d.variantId);
-      applied.push({ selector: d.selector, variantId: d.variantId, el: el });
+      applied.push({ selector: d.selector, variantId: d.variantId, el: el, ops: d.ops, fingerprint: el.innerHTML });
       track(d.variantId, d.selector, "impression");
     });
     flush(false);
   }
 
+  // Hydration / framework re-render guard: if a personalized element's content was
+  // replaced (React re-rendered it), re-apply the variant ops. We fingerprint the
+  // element's innerHTML after applying; any later change means the framework owns
+  // the DOM again and the variant is gone.
+  if (window.MutationObserver) {
+    var scheduled = false;
+    new MutationObserver(function () {
+      if (scheduled || !applied.length) return;
+      scheduled = true;
+      requestAnimationFrame(function () {
+        scheduled = false;
+        for (var i = 0; i < applied.length; i++) {
+          var a = applied[i];
+          var el = document.querySelector(a.selector);
+          if (el && el.innerHTML !== a.fingerprint) {
+            applyOps(el, a.ops);
+            el.setAttribute("data-prism-variant", a.variantId);
+            a.el = el;
+            a.fingerprint = el.innerHTML;
+          }
+        }
+      });
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
   function decide() {
-    // Fast path: cached decisions from a prior pageview (< 5 min old) apply immediately.
     var cached = readCache();
     if (cached && Date.now() - cached.ts < 300000) applyDecisions(cached.decisions);
 
     fetch(origin + "/api/decide", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ visitorId: vid, site: site }),
     })
       .then(function (r) { return r.json(); })
@@ -116,22 +152,43 @@
         writeCache(res.decisions);
         if (!cached) applyDecisions(res.decisions);
       })
-      .catch(function () {});
+      .catch(function () {}); // fail open: visitors see the default page
   }
 
-  // Run after first paint — never block rendering.
-  if (document.readyState === "complete" || document.readyState === "interactive") {
-    requestAnimationFrame(decide);
-  } else {
-    document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(decide); });
+  function decideAfterPaint() {
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+      requestAnimationFrame(decide);
+    } else {
+      document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(decide); });
+    }
   }
+  decideAfterPaint();
+
+  // SPA support: re-decide on client-side navigation (pushState / replaceState / popstate).
+  var lastUrl = location.href;
+  function onNav() {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    applied = [];
+    try { localStorage.removeItem(cacheKey); } catch (e) {}
+    decide();
+  }
+  ["pushState", "replaceState"].forEach(function (fn) {
+    var orig = history[fn];
+    history[fn] = function () {
+      var r = orig.apply(this, arguments);
+      onNav();
+      return r;
+    };
+  });
+  addEventListener("popstate", onNav);
 
   // Public API: prism.identify({orders: 2, affinity: 'woody'}) — host site enriches the profile.
   window.prism = {
     identify: function (traits) {
       return fetch(origin + "/api/identify", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: headers(),
         body: JSON.stringify({ visitorId: vid, site: site, traits: traits }),
       }).then(function () { try { localStorage.removeItem(cacheKey); } catch (e) {} });
     },
@@ -139,6 +196,7 @@
       track(currentVariantFor(document.querySelector(selector) || document.body), selector, "conversion");
       flush(false);
     },
+    redecide: decide,
     visitorId: vid,
   };
 })();

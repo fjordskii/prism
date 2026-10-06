@@ -292,8 +292,8 @@
   <section id="pricing">
     <p class="kicker">Pricing</p>
     <h2>Free until it proves itself</h2>
-    <p class="lede">Run Prism in shadow mode for a week: it tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on.</p>
-    <div class="price-grid">
+    <p class="lede">Run Prism in shadow mode for a week: it tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on. Annual prepay: two months free, renewal price locked for 12 months. Overage never auto-bills — we right-size together first.</p>
+    <div class="price-grid" style="grid-template-columns:repeat(4,1fr)">
       <div class="tier">
         <h3>Shadow</h3>
         <div class="amount">$0</div>
@@ -309,7 +309,7 @@
       <div class="tier hot">
         <h3>Growth</h3>
         <div class="amount">$79</div>
-        <div class="per">per month</div>
+        <div class="per">per month · $790/yr</div>
         <ul>
           <li>Up to 100k visitors / mo</li>
           <li>Live personalization + bandit optimization</li>
@@ -320,18 +320,63 @@
         <a class="btn solid" href="/admin" target="_blank">Start growing</a>
       </div>
       <div class="tier">
+        <h3>Pro</h3>
+        <div class="amount">$179</div>
+        <div class="per">per month · $1,790/yr</div>
+        <ul>
+          <li>Up to 500k visitors / mo</li>
+          <li>Everything in Growth</li>
+          <li>5 sites</li>
+          <li>Klaviyo / Segment integrations</li>
+          <li>Holdout + incrementality reports</li>
+        </ul>
+        <a class="btn ghost" href="/admin" target="_blank">Go Pro</a>
+      </div>
+      <div class="tier">
         <h3>Agency</h3>
         <div class="amount">$299</div>
-        <div class="per">per month</div>
+        <div class="per">per month · $2,990/yr</div>
         <ul>
-          <li>1M visitors / mo</li>
+          <li>1M visitors / mo, per-site caps</li>
           <li>Unlimited sites, one dashboard</li>
-          <li>Client workspaces</li>
-          <li>Priority support</li>
+          <li>White-label: your domain, your brand</li>
+          <li>Per-client export + read-only seats</li>
+          <li>Priority support, named contact</li>
         </ul>
-        <a class="btn ghost" href="mailto:hello@example.com">Talk to us</a>
+        <a class="btn ghost" href="mailto:hello@useprism.com">Talk to us</a>
       </div>
     </div>
+  </section>
+
+  <section id="integrations">
+    <p class="kicker">Integrations</p>
+    <h2>Your segments already exist. Use them.</h2>
+    <p class="lede">Prism doesn't ask you to rebuild audiences — pipe the ones you already trust straight into <code>prism.identify()</code>.</p>
+    <div class="twocol">
+      <div>
+        <h3>Klaviyo (Shopify)</h3>
+        <pre class="snippet" style="margin-top:16px"><span class="c">// in your theme's &lt;head&gt;, after the snippet</span>
+&lt;script&gt;
+window.addEventListener(<span class="s">"load"</span>, () =&gt; {
+  <span class="a">prism</span>.identify({
+    orders: {{ customer.orders_count | default: 0 }},
+    lastOrderDays: {{ customer.last_order_days | default: 999 }},
+    intent: new URLSearchParams(location.search).get(<span class="s">"utm_campaign"</span>)
+  });
+});
+&lt;/script&gt;</pre>
+      </div>
+      <div>
+        <h3>Segment</h3>
+        <pre class="snippet" style="margin-top:16px"><span class="c">// one line inside your existing identify call</span>
+analytics.identify(userId, traits);
+<span class="a">prism</span>.identify(traits); <span class="c">// same traits, no dual taxonomy</span>
+
+<span class="c">// conversions flow both ways too</span>
+analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="a">prism</span>.convert(<span class="s">"#hero"</span>));</pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:24px">React / Next.js: Prism re-decides on client-side navigation and re-applies variants if a hydration pass re-renders a personalized section — verified against App Router. Consent banners: call <code>prism.identify()</code> only after consent; nothing is tracked before the first call beyond an anonymous cookie.</p>
   </section>
 
   <section id="faq">
@@ -372,8 +417,8 @@
   </section>
 
   <footer>
-    <span>Prism — personalize every visit.</span>
-    <span><a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@example.com">Contact</a></span>
+    <span>Prism — personalize every visit. A product of Prism Labs, Inc.</span>
+    <span><a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a> · <a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@useprism.com">hello@useprism.com</a></span>
   </footer>
 
 </div>

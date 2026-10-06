@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS variants (
   ops TEXT NOT NULL,                  -- JSON array of ops: [{op:'html'|'text'|'insertBefore'|'insertAfter'|'remove'|'reorder'|'setAttr', ...}]
   audience TEXT NOT NULL DEFAULT '{}',-- JSON rule: {field, op, value}[] — all must match
   weight REAL NOT NULL DEFAULT 1,     -- bandit prior scale
+  starts_at INTEGER,                  -- null = eligible immediately
+  ends_at INTEGER,                    -- null = never expires; promos auto-stop
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
@@ -48,9 +50,16 @@ export type Variant = {
   ops: string;      // JSON
   audience: string; // JSON
   weight: number;
+  starts_at: number | null;
+  ends_at: number | null;
   active: number;
   created_at: number;
 };
+
+// Existing DBs: add scheduling columns if missing (CREATE TABLE IF NOT EXISTS won't).
+for (const col of ["starts_at INTEGER", "ends_at INTEGER"]) {
+  try { db.exec(`ALTER TABLE variants ADD COLUMN ${col}`); } catch { /* already there */ }
+}
 
 export type Op =
   | { op: "html"; html: string }
