@@ -85,6 +85,31 @@ TEMPLATES.forEach(t => {
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmtCI(ci) { return ci ? (100*ci[0]).toFixed(1) + '–' + (100*ci[1]).toFixed(1) + '%' : ''; }
+const OPSYM = { eq: '=', neq: '≠', gt: '>', lt: '<', gte: '≥', lte: '≤', contains: 'contains' };
+function humanize(audience) {
+  try {
+    const rules = JSON.parse(audience);
+    if (!rules.length) return 'everyone';
+    return rules.map(r => r.field + ' ' + (OPSYM[r.op] || r.op) + ' ' + JSON.stringify(r.value)).join(' AND ');
+  } catch { return audience; }
+}
+function editVariant(v) {
+  document.getElementById('b-name').value = v.name;
+  document.getElementById('b-selector').value = v.selector;
+  let rules = [];
+  try { rules = JSON.parse(v.audience); } catch {}
+  const r0 = rules[0] || {};
+  document.getElementById('b-field').value = r0.field || '';
+  document.getElementById('b-op').value = r0.op || 'eq';
+  document.getElementById('b-value').value = r0.value != null ? String(r0.value) : '';
+  let html = '';
+  try { const ops = JSON.parse(v.ops); html = (ops.find(o => o.op === 'html') || {}).html || ''; } catch {}
+  document.getElementById('b-html').value = html;
+  document.getElementById('b-starts').value = v.starts_at ? new Date(v.starts_at).toISOString().slice(0,16) : '';
+  document.getElementById('b-ends').value = v.ends_at ? new Date(v.ends_at).toISOString().slice(0,16) : '';
+  document.getElementById('b-msg').textContent = 'Editing “' + v.name + '” — Create saves as a new variant; pause the old one.';
+  document.getElementById('builder').scrollIntoView({ behavior: 'smooth' });
+}
 
 async function load() {
   const [variants, stats] = await Promise.all([
@@ -114,14 +139,16 @@ async function load() {
     tr.innerHTML =
       '<td><b>' + esc(v.name) + '</b></td>' +
       '<td><code>' + esc(v.selector) + '</code></td>' +
-      '<td><code style="font-size:11px">' + esc(v.audience) + '</code></td>' +
+      '<td style="font-size:12px">' + esc(humanize(v.audience)) + '</td>' +
       '<td>' + s.impressions + '<div class="bar" style="width:' + (100 * s.impressions / maxImp) + '%"></div></td>' +
       '<td>' + s.conversions + '</td>' +
       '<td class="rate">' + (s.rate != null ? (100*s.rate).toFixed(1) + '%' : '—') + ' <span class="ci">' + fmtCI(s.ci95) + '</span></td>' +
       '<td>' + status + '</td>' +
-      '<td><button onclick="toggle(' + v.id + ')">' + (v.active ? 'Pause' : 'Resume') + '</button> ' +
+      '<td><button data-edit="' + v.id + '">Edit</button> ' +
+      '<button onclick="toggle(' + v.id + ')">' + (v.active ? 'Pause' : 'Resume') + '</button> ' +
       '<button onclick="del(' + v.id + ')">Delete</button></td>';
     tb.appendChild(tr);
+    tr.querySelector('[data-edit]').addEventListener('click', () => editVariant(v));
   }
   // control row
   if (c.impressions > 0) {

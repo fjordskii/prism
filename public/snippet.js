@@ -34,14 +34,30 @@
   }
 
   // ---- DOM ops ----
+  // Insert ops tag their output so re-application (after a framework re-render)
+  // can remove the old copy instead of duplicating it.
+  function clearOwned(el) {
+    [el.previousElementSibling, el.nextElementSibling].forEach(function (sib) {
+      if (sib && sib.getAttribute && sib.getAttribute("data-prism-owned") === "1") sib.remove();
+    });
+    el.querySelectorAll("[data-prism-owned]").forEach(function (n) { n.remove(); });
+  }
   function applyOps(el, ops) {
+    clearOwned(el);
     for (var i = 0; i < ops.length; i++) {
       var o = ops[i];
       try {
         if (o.op === "html") el.innerHTML = o.html;
         else if (o.op === "text") el.textContent = o.text;
-        else if (o.op === "insertBefore") el.insertAdjacentHTML("beforebegin", o.html);
-        else if (o.op === "insertAfter") el.insertAdjacentHTML("afterend", o.html);
+        else if (o.op === "insertBefore" || o.op === "insertAfter") {
+          var pos = o.op === "insertBefore" ? "beforebegin" : "afterend";
+          var doc = document.createElement("template");
+          doc.innerHTML = o.html.trim();
+          for (var n = 0; n < doc.content.children.length; n++) {
+            doc.content.children[n].setAttribute("data-prism-owned", "1");
+          }
+          el.insertAdjacentHTML(pos, doc.innerHTML);
+        }
         else if (o.op === "remove") el.remove();
         else if (o.op === "setAttr") el.setAttribute(o.name, o.value);
         else if (o.op === "reorder") {

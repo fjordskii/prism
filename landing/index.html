@@ -354,15 +354,24 @@
     <p class="lede">Prism doesn't ask you to rebuild audiences — pipe the ones you already trust straight into <code>prism.identify()</code>.</p>
     <div class="twocol">
       <div>
-        <h3>Klaviyo (Shopify)</h3>
-        <pre class="snippet" style="margin-top:16px"><span class="c">// in your theme's &lt;head&gt;, after the snippet</span>
+        <h3>Klaviyo + Shopify</h3>
+        <pre class="snippet" style="margin-top:16px"><span class="c">// 1) Shopify Liquid — real fields only (login-gated customers)</span>
 &lt;script&gt;
-window.addEventListener(<span class="s">"load"</span>, () =&gt; {
+{% if customer %}
   <span class="a">prism</span>.identify({
-    orders: {{ customer.orders_count | default: 0 }},
-    lastOrderDays: {{ customer.last_order_days | default: 999 }},
-    intent: new URLSearchParams(location.search).get(<span class="s">"utm_campaign"</span>)
+    orders: {{ customer.orders_count }},
+    lastOrderDays: {{ 'now' | date: '%s' | minus: customer.last_order.created_at | date: '%s' | divided_by: 86400 }},
+    tags: {{ customer.tags | json }}
   });
+{% endif %}
+&lt;/script&gt;
+
+<span class="c">// 2) Klaviyo — forward the identified profile (runs after klaviyo.js)</span>
+&lt;script&gt;
+var _learnq = window._learnq || [];
+_learnq.push(function () {
+  var p = this.<span class="a">identify</span>() || {};
+  if (p.$email) <span class="a">prism</span>.identify({ klaviyoKnown: true, klaviyoSegments: p.$segments || [] });
 });
 &lt;/script&gt;</pre>
       </div>

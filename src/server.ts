@@ -6,7 +6,7 @@ import { db, matchAudience, type Variant, type Rule } from "./db";
 import { banditScore } from "./bandit";
 import { dashboard } from "./dashboard";
 
-const app = new Hono();
+const app = new Hono<{ Variables: { demoBody?: Record<string, unknown> } }>();
 app.use("/api/*", cors());
 
 // Admin auth: Bearer token on mutating/admin routes. Set ADMIN_TOKEN in env.
@@ -22,8 +22,25 @@ function authorized(c: { req: { header: (n: string) => string | undefined; query
 }
 app.use("/api/variants*", async (c, next) => {
   if (c.req.method === "GET") return next();
-  if (!authorized(c)) return c.json({ error: "unauthorized" }, 401);
-  return next();
+  if (authorized(c)) return next();
+  // Demo token may write ONLY to the demo site — prospects must be able to
+  // complete the authoring loop during evaluation.
+  if (DEMO_TOKEN) {
+    const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+    if (tok === DEMO_TOKEN) {
+      if (c.req.method === "POST" && c.req.path === "/api/variants") {
+        const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+        if (body?.site === "demo") { c.set("demoBody", body); return next(); }
+      }
+      // toggle/delete allowed only for demo-site variants
+      const id = c.req.param("id");
+      if (id) {
+        const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(id) as { site: string } | null;
+        if (v?.site === "demo") return next();
+      }
+    }
+  }
+  return c.json({ error: "unauthorized" }, 401);
 });
 app.use("/admin", async (c, next) => {
   if (!authorized(c, true)) return c.text("Unauthorized — pass ?token= or an Authorization: Bearer header.", 401);
@@ -152,7 +169,8 @@ app.get("/api/variants", (c) => {
 });
 
 app.post("/api/variants", async (c) => {
-  const b = await c.req.json<Partial<Variant> & { site: string; name: string; selector: string }>();
+  // Body may already be parsed by the demo-token middleware (JSON bodies are single-read).
+  const b = (c.get("demoBody") ?? await c.req.json().catch(() => ({}))) as Partial<Variant> & { site: string; name: string; selector: string };
   if (!b.site || !b.name || !b.selector) return c.json({ error: "site, name, selector required" }, 400);
   const r = db
     .prepare(
@@ -236,7 +254,12 @@ app.get("/api/export", (c) => {
   });
 });
 
-// GDPR/CCPA: export or erase one visitor across visitors+events.
+// GDPR/CCPA: export or erase one visitor across visitors+events. Token-gated —
+// these read/destroy PII-adjacent data, so they use the same auth as /admin.
+app.use("/api/visitors/*", async (c, next) => {
+  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
+  return next();
+});
 app.get("/api/visitors/:id", (c) => {
   const site = c.req.query("site") ?? "demo";
   return c.json({
@@ -251,7 +274,6 @@ app.delete("/api/visitors/:id", (c) => {
     db.prepare("DELETE FROM events WHERE visitor_id = ? AND site = ?").run(id, site);
     db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
   });
-  tx();
   return c.json({ ok: true, deleted: id });
 });
 
@@ -269,7 +291,7 @@ app.get("/privacy", (c) =>
 <h2>What we never do</h2>
 <p>No fingerprinting, no third-party cookies, no cross-site tracking, no sale or sharing of data. Events stay on the site's own first-party context.</p>
 <h2>Your rights (GDPR / CCPA)</h2>
-<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code> — removes their profile and every event. Full site export: <code>GET /api/export?site=…</code> (token-gated).</p>
+<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code> — removes their profile and every event. Both are token-gated (same auth as the dashboard). Full site export: <code>GET /api/export?site=…</code> (token-gated).</p>
 <h2>Retention &amp; subprocessors</h2>
 <p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. Sole subprocessor: Fly.io. Contact: privacy@useprism.com.</p>`
     )
