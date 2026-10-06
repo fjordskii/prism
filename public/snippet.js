@@ -6,9 +6,10 @@
 (function () {
   "use strict";
   var script = document.currentScript;
-  var origin = new URL(script.src).origin;
+  var origin = script.getAttribute("data-host") || new URL(script.src).origin;
   var site = script.getAttribute("data-site") || location.hostname;
   var writeKey = script.getAttribute("data-key") || null; // optional anti-poisoning key
+  var COOKIE = script.getAttribute("data-cookie") || "prism_vid"; // white-label override
 
   // ---- identity: first-party cookie, 400 days ----
   function getCookie(n) {
@@ -18,14 +19,14 @@
   function setCookie(n, v) {
     document.cookie = n + "=" + encodeURIComponent(v) + ";max-age=34560000;path=/;samesite=lax";
   }
-  var vid = getCookie("prism_vid");
+  var vid = getCookie(COOKIE);
   if (!vid) {
     vid = "v_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    setCookie("prism_vid", vid);
+    setCookie(COOKIE, vid);
   }
 
   // ---- local variant cache (survives reloads, cuts decision latency) ----
-  var cacheKey = "prism_cache_" + site;
+  var cacheKey = (script.getAttribute("data-cookie") || "prism") + "_cache_" + site;
   function readCache() {
     try { return JSON.parse(localStorage.getItem(cacheKey) || "null"); } catch (e) { return null; }
   }

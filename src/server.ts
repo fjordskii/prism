@@ -304,9 +304,9 @@ app.get("/security", (c) =>
     trustPage(
       "Security",
       `<h2>Serving model</h2>
-<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, wraps every DOM op in try/catch, and fails open — if Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code.</p>
+<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, wraps every DOM op in try/catch, and fails open — if Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied ops replace, never duplicate.</p>
 <h2>Access control</h2>
-<p>Variant writes, the dashboard, and exports are gated by a Bearer token. Read-only demo access uses a separate token. Optional per-site write key (<code>SITE_WRITE_KEY</code>) locks the identify/events ingestion against event poisoning.</p>
+<p>Variant writes, the dashboard, exports, and DSR endpoints are Bearer-gated. Optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify/events ingestion against poisoning. Supply chain: self-host the snippet from your own domain (<code>data-host</code>), or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>
 <p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% Wilson confidence intervals. A deterministic holdout arm (default 10% per selector) preserves a control group for true incremental lift.</p>
 <h2>Data flows</h2>
@@ -324,7 +324,7 @@ app.get("/terms", (c) =>
 <h2>Billing</h2>
 <p>Annual prepay: 2 months free (pay 10, get 12). Renewal price locked for 12 months. Overage: service continues; we contact you to right-size before any charge. Cancel anytime; you keep a full data export (<code>/api/export</code>).</p>
 <h2>Availability</h2>
-<p>Best-effort on Shadow; 99.9% monthly target on paid plans. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
+<p>SLA on paid plans: 99.9% monthly uptime, measured at the Fly edge. Miss it and you get a service credit of 10x the downtime (1 hour down = 10 hours credited), applied automatically. Best-effort on Shadow. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
 <h2>Liability</h2>
 <p>You approve every variant; Prism never generates visitor-facing content at request time. Standard SaaS liability cap: fees paid in the trailing 12 months.</p>`
     )
@@ -332,6 +332,13 @@ app.get("/terms", (c) =>
 );
 
 // ---------- dashboard + static ----------
+// Versioned immutable snippet for SRI pinning / supply-chain control.
+// Hash printed at startup; pin it in your CSP/integrity attribute.
+app.use("/snippet.v1.js", async (c, next) => {
+  await next();
+  c.header("cache-control", "public, max-age=31536000, immutable");
+});
+app.use("/snippet.v1.js", serveStatic({ path: "./public/snippet.js" }));
 app.get("/admin", (c) => c.html(dashboard()));
 // Snippet: long cache + immutable-ish; it only changes on deploy, and cache-bust via ?v= if needed.
 app.use("/snippet.js", async (c, next) => {

@@ -250,6 +250,11 @@
     <pre class="snippet"><span class="c">&lt;!-- in your &lt;head&gt;, once --&gt;</span>
 &lt;script defer src=<span class="s">"https://prism-personalize.fly.dev/snippet.js"</span> data-site=<span class="s">"yourstore"</span>&gt;&lt;/script&gt;
 
+<span class="c">&lt;!-- pinned + self-hosted (supply-chain control): --&gt;</span>
+<span class="c">&lt;script defer src="/prism-snippet.v1.js" data-host="https://prism-personalize.fly.dev"</span>
+<span class="c">  integrity="sha384-NZwm+IGHK1LRXSoFWVLaeUQjH0Es2Cbi9fmysYsv/zdm+QjcJDtpQ+2ybzL/1vFA"</span>
+<span class="c">  data-site="yourstore" data-cookie="mybrand_vid"&gt;&lt;/script&gt;</span>
+
 <span class="c">// tell Prism who this visitor is, from data you already have</span>
 <span class="a">prism</span>.identify({ orders: 3, lastOrderDays: 32, intent: <span class="s">"gift"</span> });
 
