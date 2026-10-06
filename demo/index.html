@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linden — hand-poured candles</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 15px/1.6 Georgia, serif; color: #2b2620; background: #faf8f4; }
+  nav { display: flex; gap: 24px; align-items: center; padding: 18px 40px; border-bottom: 1px solid #e8e2d8; }
+  nav .logo { font-size: 20px; letter-spacing: .25em; font-weight: 700; }
+  nav a { color: inherit; text-decoration: none; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  #hero { padding: 80px 40px; background: #efe9df; text-align: center; }
+  #hero h1 { font-size: 44px; font-weight: 400; margin: 12px 0; }
+  #hero p { max-width: 480px; margin: 0 auto 24px; color: #6b6357; }
+  .btn { display: inline-block; padding: 12px 28px; background: #2b2620; color: #faf8f4; text-decoration: none; letter-spacing: .1em; font-size: 13px; text-transform: uppercase; border: 0; cursor: pointer; font-family: inherit; }
+  .btn.ghost { background: transparent; color: #2b2620; border: 1px solid #2b2620; }
+  section { padding: 48px 40px; max-width: 1000px; margin: 0 auto; }
+  h2 { font-weight: 400; font-size: 26px; margin-bottom: 20px; }
+  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .tile { background: #fff; border: 1px solid #e8e2d8; padding: 24px; text-align: center; }
+  .tile h3 { font-weight: 400; font-size: 17px; margin: 10px 0 4px; }
+  .tile .price { color: #6b6357; }
+  .tile .swatch { height: 90px; border-radius: 4px; }
+  .tile button { margin-top: 14px; }
+  #pdp-strip { background: #f4efe6; }
+  .sim { position: fixed; bottom: 16px; right: 16px; background: #1a1a1a; color: #fff; padding: 14px; border-radius: 10px; font: 12px/1.4 -apple-system, sans-serif; width: 230px; z-index: 99; }
+  .sim b { display: block; margin-bottom: 8px; letter-spacing: .06em; text-transform: uppercase; font-size: 11px; color: #aaa; }
+  .sim button { display: block; width: 100%; margin: 4px 0; padding: 7px; font: inherit; background: #333; color: #fff; border: 0; border-radius: 6px; cursor: pointer; text-align: left; }
+  .sim button:hover { background: #4c6ef5; }
+  .sim .reset:hover { background: #e03131; }
+  #toast { position: fixed; top: 16px; right: 16px; background: #2b2620; color: #fff; padding: 10px 18px; border-radius: 8px; font: 13px -apple-system, sans-serif; opacity: 0; transition: opacity .3s; z-index: 99; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="logo">LINDEN</span>
+  <a href="#">Shop all</a><a href="#">Bundles</a><a href="#">Scents</a><a href="#">Journal</a>
+</nav>
+
+<div id="hero">
+  <small style="letter-spacing:.2em;text-transform:uppercase;color:#8a8175">Hand-poured in small batches</small>
+  <h1>Light every moment.</h1>
+  <p>Hand-poured candles made with clean ingredients and crafted for a calm, beautiful home.</p>
+  <a class="btn" href="#grid" data-prism-convert="#hero">Explore collection</a>
+</div>
+
+<section>
+  <h2>Shop by scent</h2>
+  <div id="grid">
+    <div class="tile" data-scent="fig"><div class="swatch" style="background:#b7a58e"></div><h3>Fig &amp; Cedar</h3><span class="price">$42</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+    <div class="tile" data-scent="orange"><div class="swatch" style="background:#e8b478"></div><h3>Orange Blossom</h3><span class="price">$40</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+    <div class="tile" data-scent="pepper"><div class="swatch" style="background:#5c5348"></div><h3>Black Pepper &amp; Oak</h3><span class="price">$48</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+    <div class="tile" data-scent="sandal"><div class="swatch" style="background:#c9a86a"></div><h3>Sandalwood &amp; Amber</h3><span class="price">$42</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+    <div class="tile" data-scent="seasalt"><div class="swatch" style="background:#9db8b2"></div><h3>Sea Salt &amp; Driftwood</h3><span class="price">$40</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+    <div class="tile" data-scent="vanilla"><div class="swatch" style="background:#e3d5c0"></div><h3>Smoked Vanilla</h3><span class="price">$38</span><br><button class="btn ghost" data-prism-convert="#grid">Add to cart</button></div>
+  </div>
+</section>
+
+<section id="pdp-strip">
+  <h2>Sandalwood &amp; Amber</h2>
+  <p>Warm sandalwood, soft amber, and a trace of cardamom. 60-hour burn.</p>
+  <p style="margin:14px 0"><strong>$42.00</strong> · one-time purchase</p>
+  <button class="btn" data-prism-convert="#pdp-strip">Add to cart</button>
+</section>
+
+<div id="toast"></div>
+
+<div class="sim">
+  <b>Persona simulator</b>
+  <button onclick="setPersona('new')">New visitor (reset traits)</button>
+  <button onclick="setPersona('bundle')">Bundle buyer (3 in cart)</button>
+  <button onclick="setPersona('returning')">Returning customer</button>
+  <button onclick="setPersona('woody')">Woody-scent browser</button>
+  <button onclick="setPersona('gift')">Gift buyer</button>
+  <button class="reset" onclick="wipe()">Wipe cookie + cache</button>
+</div>
+
+<script defer src="/snippet.js" data-site="demo"></script>
+<script>
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 2500);
+}
+async function setPersona(p) {
+  const traits = {
+    new: {},
+    bundle: { cartItems: 3, visits: 2 },
+    returning: { orders: 2, lastOrderDays: 32 },
+    woody: { affinity: 'woody' },
+    gift: { intent: 'gift' },
+  }[p];
+  await prism.identify(traits);
+  toast('Persona set: ' + p + ' — reloading');
+  setTimeout(() => location.reload(), 700);
+}
+function wipe() {
+  document.cookie = 'prism_vid=;max-age=0;path=/';
+  localStorage.clear();
+  toast('Wiped — reloading as fresh visitor');
+  setTimeout(() => location.reload(), 700);
+}
+</script>
+</body>
+</html>
