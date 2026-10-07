@@ -25,7 +25,7 @@ export function dashboard(): string {
   .tmpl:hover { border-color: #4c6ef5; background: #f4f7ff; }
   #lift { margin-top: 12px; padding: 12px 16px; background: #f4f7ff; border-radius: 8px; display: none; }
 </style></head><body>
-<h1>Prism — personalization admin</h1>
+<h1>Prism: personalization admin</h1>
 <p>Site: <select id="sitePicker" style="font:inherit;padding:4px 8px;border:1px solid #ccc;border-radius:6px"></select> <input id="newSite" placeholder="new site slug" style="width:140px"> <button id="addSite" style="padding:4px 10px">Add</button> · <a href="/demo/" target="_blank">open demo storefront ↗</a> · <a id="export" href="#">export data (JSON)</a></p>
 
 <h2>Performance <span style="font-weight:400;color:#777;font-size:13px" id="holdout"></span></h2>
@@ -34,19 +34,19 @@ export function dashboard(): string {
   <th>Name</th><th>Selector</th><th>Audience</th><th>Impressions</th><th>Conversions</th><th>Rate (95% CI)</th><th>Status</th><th></th>
 </tr></thead><tbody></tbody></table>
 
-<h2>New variant — pick a template or start blank</h2>
+<h2>New variant: pick a template or start blank</h2>
 <div id="templates"></div>
 <div id="builder">
   <div><label>Name</label><input id="b-name" placeholder="Gift-buyer hero"></div>
   <div><label>CSS selector</label><input id="b-selector" placeholder="#hero"></div>
-  <div><label>Audience rule — field</label><input id="b-field" placeholder="intent (blank = everyone)"></div>
+  <div><label>Audience rule field</label><input id="b-field" placeholder="intent (blank = everyone)"></div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div><label>op</label><select id="b-op"><option>eq</option><option>neq</option><option>gt</option><option>lt</option><option>gte</option><option>lte</option><option>contains</option></select></div>
     <div><label>value</label><input id="b-value" placeholder="gift"></div>
   </div>
   <div class="full"><label>Content (HTML to swap in)</label><textarea id="b-html" rows="3" placeholder="<h1>The gift that fills a room.</h1>"></textarea></div>
   <div><label>Starts (optional)</label><input id="b-starts" type="datetime-local"></div>
-  <div><label>Ends (optional — promo auto-expires)</label><input id="b-ends" type="datetime-local"></div>
+  <div><label>Ends (optional, promos auto-expire)</label><input id="b-ends" type="datetime-local"></div>
   <div class="full"><button id="b-create">Create variant</button> <span id="b-msg" style="color:#2a9d6e"></span></div>
 </div>
 
@@ -86,11 +86,11 @@ const TEMPLATES = [
   { name: 'Returning-customer subscribe strip', selector: '#pdp-strip', field: 'orders', op: 'gte', value: '1',
     html: '<div data-prism-convert="#pdp-strip" style="border:1px solid #ccc;padding:16px;border-radius:6px"><strong>Welcome back.</strong> Subscribe & save 15%. <button>Start subscription</button></div>' },
   { name: 'Bundle upsell', selector: '#grid', field: 'cartItems', op: 'gte', value: '3',
-    html: '<p data-prism-convert="#grid" style="background:#111;color:#fff;padding:12px;text-align:center;border-radius:6px">Bundle & save — any three for $108.</p>' },
+    html: '<p data-prism-convert="#grid" style="background:#111;color:#fff;padding:12px;text-align:center;border-radius:6px">Bundle & save: any three for $108.</p>' },
   { name: 'First-visit offer', selector: '#hero', field: 'visits', op: 'lte', value: '1',
     html: '<small>WELCOME</small><h1>First time here? Take 10% off.</h1><p>Code WELCOME10 at checkout.</p><a class="btn" data-prism-convert="#hero" href="#shop">Shop now</a>' },
   { name: 'Category affinity re-sort', selector: '#grid', field: 'affinity', op: 'eq', value: 'woody',
-    html: '', note: 'uses a reorder op — edit after creating' },
+    html: '', note: 'uses a reorder op; edit after creating' },
 ];
 const tDiv = document.getElementById('templates');
 TEMPLATES.forEach(t => {
@@ -131,7 +131,7 @@ function editVariant(v) {
   document.getElementById('b-html').value = html;
   document.getElementById('b-starts').value = v.starts_at ? new Date(v.starts_at).toISOString().slice(0,16) : '';
   document.getElementById('b-ends').value = v.ends_at ? new Date(v.ends_at).toISOString().slice(0,16) : '';
-  document.getElementById('b-msg').textContent = 'Editing “' + v.name + '” — Create saves as a new variant; pause the old one.';
+  document.getElementById('b-msg').textContent = 'Editing "' + v.name + '". Create saves as a new variant; pause the old one.';
   document.getElementById('builder').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -141,7 +141,7 @@ async function load() {
     fetch('/api/stats?site=' + site).then(r => r.json()),
   ]);
   const byId = Object.fromEntries(stats.variants.map(s => [s.id, s]));
-  document.getElementById('holdout').textContent = '· ' + stats.holdoutPct + '% holdout control';
+  document.getElementById('holdout').textContent = '· ' + stats.holdoutPct + '% of traffic held out as control';
   const c = stats.control;
   const liftDiv = document.getElementById('lift');
   if (c.impressions > 0) {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Linden — hand-poured candles</title>
+<title>Linden: hand-poured candles</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font: 15px/1.6 Georgia, serif; color: #2b2620; background: #faf8f4; }
@@ -76,7 +76,7 @@
   <button class="reset" onclick="wipe()">Wipe cookie + cache</button>
 </div>
 <script defer src="/snippet.js" data-site="demo"></script>
-<div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;background:#111;color:#fff;font:12px/1.4 -apple-system,sans-serif;padding:8px 16px;border-radius:99px;opacity:.92">This is the <b>Prism demo store</b> — pick a persona (bottom-right) and watch the page adapt · <a href="/" style="color:#8fb4f0">what is this? →</a></div>
+<div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;background:#111;color:#fff;font:12px/1.4 -apple-system,sans-serif;padding:8px 16px;border-radius:99px;opacity:.92">This is the <b>Prism demo store</b>. Pick a persona (bottom right) and watch the page adapt. <a href="/" style="color:#8fb4f0">What is this?</a></div>
 <script>
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -92,13 +92,13 @@ async function setPersona(p) {
     gift: { intent: 'gift' },
   }[p];
   await prism.identify(traits);
-  toast('Persona set: ' + p + ' — reloading');
+  toast('Persona set: ' + p + '. Reloading');
   setTimeout(() => location.reload(), 700);
 }
 function wipe() {
   document.cookie = 'prism_vid=;max-age=0;path=/';
   localStorage.clear();
-  toast('Wiped — reloading as fresh visitor');
+  toast('Wiped. Reloading as fresh visitor');
   setTimeout(() => location.reload(), 700);
 }
 </script>

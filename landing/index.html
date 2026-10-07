@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Prism — one site, every visitor</title>
-<meta name="description" content="Prism personalizes any website for every visitor. One script tag, pre-approved variants, a decision engine that learns. Live in a day.">
+<title>Prism: one site, every visitor</title>
+<meta name="description" content="Prism shows every visitor the version of your site most likely to convert. One script tag, approved variants only, sub-millisecond decisions.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -227,8 +227,8 @@
     <h1>One site. Every visitor.</h1>
     <p class="sub">
       Prism splits your website the way a prism splits light: one beam in, a spectrum out.
-      Each visitor gets the version most likely to convert them — decided in under a
-      millisecond from a warm cache, rendered after first paint.
+      Every visitor gets the version most likely to convert them. Decisions come from a
+      local cache in under a millisecond, after first paint.
     </p>
     <div class="actions">
       <a class="btn solid" href="#install">Install the snippet</a>
@@ -272,7 +272,7 @@
         <li style="--c: var(--v)" class="more">…your segments</li>
       </ol>
       <span class="prism-tag" aria-hidden="true">your website</span>
-      <figcaption>fig. 1 — one page in, the right version out. Variants are pre-approved by you; the engine only chooses.</figcaption>
+      <figcaption>fig. 1. One page in, the right version out. You approve every variant; the engine only picks.</figcaption>
     </figure>
     <script>
       // Reserve the dark plate only where the 3D figure can run; fall back to the SVG if it never arrives.
@@ -296,19 +296,19 @@
 
   <section id="how">
     <p class="kicker">How it works</p>
-    <h2>Three steps. No redesign, no migration, no model in the request path.</h2>
+    <h2>Three steps. Your redesign stays untouched.</h2>
     <ol class="steps">
       <li>
         <h3>Paste one line</h3>
-        <p>A 6&nbsp;KB script tag, loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress — anything that serves HTML.</p>
+        <p>A 6&nbsp;KB script tag, loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
       </li>
       <li>
         <h3>Approve the variants</h3>
-        <p>You (or your AI agent, over the API) write the alternates: a gift-shopper hero, a subscribe-and-save strip, a re-sorted catalog. Prism never invents content at request time — it only chooses among what you approved.</p>
+        <p>You (or your AI agent, over the API) write the alternates: a gift-shopper hero, a subscribe-and-save strip, a re-sorted catalog. Prism only picks among what you approved. Nothing is generated at request time.</p>
       </li>
       <li>
         <h3>It learns who converts</h3>
-        <p>Every impression and conversion feeds a Bayesian bandit. Winning variants earn more traffic automatically; losers fade out. No test babysitting, no significance calculators.</p>
+        <p>Every impression and conversion feeds a Bayesian bandit. Winning variants earn more traffic automatically; losers fade out. You never run a test by hand or watch a significance calculator.</p>
       </li>
     </ol>
   </section>
@@ -344,20 +344,20 @@
         <h3>What Prism does</h3>
         <ul>
           <li>Swaps, inserts, reorders, or removes page sections per visitor segment</li>
-          <li>Remembers visitors in a first-party cookie — no fingerprinting, works with consent banners</li>
+          <li>Remembers visitors in a first-party cookie, no fingerprinting, and works with consent banners</li>
           <li>Shifts traffic to winning variants automatically, per segment</li>
-          <li>Runs after first paint — your Lighthouse score is untouched</li>
+          <li>Runs after first paint, so your Lighthouse score is untouched</li>
           <li>Lets your AI agent author and manage variants through the same API you use</li>
         </ul>
       </div>
       <div class="isnt">
         <h3>What it never does</h3>
         <ul>
-          <li>Generate copy or designs on the fly — only your approved variants ship</li>
+          <li>Generate copy or designs on the fly. Only your approved variants ship</li>
           <li>Block rendering or flash personalized content before paint</li>
           <li>Require a redesign, a migration, or a CMS</li>
-          <li>Put a model in the request path — decisions are rules plus statistics</li>
-          <li>Lock your data in — visitors, variants, and events are yours to export</li>
+          <li>Put a model in the request path. Decisions are rules plus statistics</li>
+          <li>Lock your data in. Visitors, variants, and events are yours to export</li>
         </ul>
       </div>
     </div>
@@ -366,7 +366,7 @@
   <section id="pricing">
     <p class="kicker">Pricing</p>
     <h2>Free until it proves itself</h2>
-    <p class="lede">Run Prism in shadow mode for a week: it tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on. Annual prepay: two months free, renewal price locked for 12 months. Overage never auto-bills — we right-size together first.</p>
+    <p class="lede">Run Prism in shadow mode for a week. It tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on. Annual prepay: two months free, renewal price locked for 12 months. If you go over your visitor cap, we contact you to right-size before any charge.</p>
     <div class="price-grid" style="grid-template-columns:repeat(4,1fr)">
       <div class="tier">
         <h3>Shadow</h3>
@@ -383,7 +383,7 @@
       <div class="tier hot">
         <h3>Growth</h3>
         <div class="amount">$79</div>
-        <div class="per">per month · $790/yr</div>
+        <div class="per">per month, or $790/yr</div>
         <ul>
           <li>Up to 100k visitors / mo</li>
           <li>Live personalization + bandit optimization</li>
@@ -396,7 +396,7 @@
       <div class="tier">
         <h3>Pro</h3>
         <div class="amount">$179</div>
-        <div class="per">per month · $1,790/yr</div>
+        <div class="per">per month, or $1,790/yr</div>
         <ul>
           <li>Up to 500k visitors / mo</li>
           <li>Everything in Growth</li>
@@ -409,7 +409,7 @@
       <div class="tier">
         <h3>Agency</h3>
         <div class="amount">$299</div>
-        <div class="per">per month · $2,990/yr</div>
+        <div class="per">per month, or $2,990/yr</div>
         <ul>
           <li>1M visitors / mo, per-site caps</li>
           <li>Unlimited sites, one dashboard</li>
@@ -425,11 +425,11 @@
   <section id="integrations">
     <p class="kicker">Integrations</p>
     <h2>Your segments already exist. Use them.</h2>
-    <p class="lede">Prism doesn't ask you to rebuild audiences — pipe the ones you already trust straight into <code>prism.identify()</code>.</p>
+    <p class="lede">Prism doesn't ask you to rebuild audiences. Pipe the segments you already trust straight into <code>prism.identify()</code>.</p>
     <div class="twocol">
       <div>
         <h3>Klaviyo + Shopify</h3>
-        <pre class="snippet" style="margin-top:16px"><span class="c">// 1) Shopify Liquid — real fields only (login-gated customers)</span>
+        <pre class="snippet" style="margin-top:16px"><span class="c">// 1) Shopify Liquid, real fields only (login-gated customers)</span>
 &lt;script&gt;
 {% if customer %}
   <span class="a">prism</span>.identify({
@@ -440,7 +440,7 @@
 {% endif %}
 &lt;/script&gt;
 
-<span class="c">// 2) Klaviyo — forward the identified profile (runs after klaviyo.js)</span>
+<span class="c">// 2) Klaviyo: forward the identified profile (runs after klaviyo.js)</span>
 &lt;script&gt;
 var _learnq = window._learnq || [];
 _learnq.push(function () {
@@ -459,7 +459,7 @@ analytics.identify(userId, traits);
 analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="a">prism</span>.convert(<span class="s">"#hero"</span>));</pre>
       </div>
     </div>
-    <p class="lede" style="margin-top:24px">React / Next.js: Prism re-decides on client-side navigation and re-applies variants if a hydration pass re-renders a personalized section — verified against App Router. Consent banners: call <code>prism.identify()</code> only after consent; nothing is tracked before the first call beyond an anonymous cookie.</p>
+    <p class="lede" style="margin-top:24px">React / Next.js: Prism re-decides on client-side navigation and re-applies variants if a hydration pass re-renders a personalized section, verified against App Router. Consent banners: call <code>prism.identify()</code> only after consent. Nothing is tracked before the first call beyond an anonymous cookie.</p>
   </section>
 
   <section id="faq">
@@ -472,7 +472,7 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
       </details>
       <details>
         <summary>Do visitors see a flash of the wrong content?</summary>
-        <p>First-ever pageview can show the default briefly — by design, since we never block paint. Every visit after that applies the cached decision before the frame is visible.</p>
+        <p>A first-ever pageview can show the default briefly, since we never block paint. Every visit after that applies the cached decision before the frame is visible.</p>
       </details>
       <details>
         <summary>Does it use AI to write my copy?</summary>
@@ -480,7 +480,7 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
       </details>
       <details>
         <summary>How is this different from an A/B testing tool?</summary>
-        <p>A/B tools split traffic randomly and wait for you to call a winner. Prism splits by visitor segment and continuously reallocates traffic to winners per segment — the test runs and resolves itself.</p>
+        <p>A/B tools split traffic randomly and wait for you to call a winner. Prism splits by visitor segment and continuously reallocates traffic to winners per segment, so the test runs and resolves itself.</p>
       </details>
       <details>
         <summary>What platforms does it work with?</summary>
@@ -492,7 +492,7 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
   <section class="final" style="border-bottom:0">
     <p class="kicker">Get started</p>
     <h2>Your next visitor is not your average visitor.</h2>
-    <p class="lede">Paste the snippet, watch the segments appear, turn on your first variant today.</p>
+    <p class="lede">Paste the snippet, watch the segments appear, and turn on your first variant today.</p>
     <div class="actions" style="margin-top:32px;display:flex;gap:14px">
       <a class="btn solid" href="#install">Install the snippet</a>
       <a class="btn ghost" href="/demo/" target="_blank">Try the live demo</a>
@@ -500,7 +500,7 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
   </section>
 
   <footer>
-    <span>Prism — personalize every visit. A product of Sunday Morning Software (Prism Labs).</span>
+    <span>Prism: personalize every visit. A product of Sunday Morning Software (Prism Labs).</span>
     <span><a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a> · <a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@sundaymorning.software">hello@sundaymorning.software</a></span>
   </footer>
 

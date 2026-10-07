@@ -44,7 +44,7 @@ app.use("/api/variants*", async (c, next) => {
   return c.json({ error: "unauthorized" }, 401);
 });
 app.use("/admin", async (c, next) => {
-  if (!authorized(c, true)) return c.text("Unauthorized — pass ?token= or an Authorization: Bearer header.", 401);
+  if (!authorized(c, true)) return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
   return next();
 });
 
@@ -283,22 +283,22 @@ app.delete("/api/visitors/:id", (c) => {
 });
 
 // ---------- trust pages ----------
-const trustPage = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${title} — Prism</title>
+const trustPage = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}: Prism</title>
 <style>body{font:15px/1.7 -apple-system,system-ui,sans-serif;max-width:720px;margin:48px auto;padding:0 20px;color:#1a1a1a}h1{font-size:24px}h2{font-size:17px;margin-top:28px}code{background:#f0f0ec;padding:1px 5px;border-radius:4px}</style></head>
-<body><h1>${title}</h1>${body}<p style="margin-top:40px;color:#777"><a href="/landing/">← Prism</a></p></body></html>`;
+<body><h1>${title}</h1>${body}<p style="margin-top:40px;color:#777"><a href="/landing/">Back to Prism</a></p></body></html>`;
 
 app.get("/privacy", (c) =>
   c.html(
     trustPage(
       "Privacy",
       `<h2>What we store</h2>
-<p>Per visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and traits the host site explicitly sends via <code>prism.identify()</code>. Per event: variant shown, selector, impression/conversion, timestamp.</p>
+<p>For each visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and any traits the site explicitly sends through <code>prism.identify()</code>. For each event: the variant shown, the selector, whether it was an impression or conversion, and a timestamp.</p>
 <h2>What we never do</h2>
-<p>No fingerprinting, no third-party cookies, no cross-site tracking, no sale or sharing of data. Events stay on the site's own first-party context.</p>
+<p>We don't fingerprint browsers, set third-party cookies, or track visitors across sites. Visitor data is never sold or shared. Events stay in the site's own first-party context.</p>
 <h2>Your rights (GDPR / CCPA)</h2>
-<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code> — removes their profile and every event. Both are token-gated (same auth as the dashboard). Full site export: <code>GET /api/export?site=…</code> (token-gated).</p>
+<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code>, which removes their profile and every event. Both endpoints require the same Bearer token as the dashboard. Full site export: <code>GET /api/export?site=…</code> (also token-gated).</p>
 <h2>Retention &amp; subprocessors</h2>
-<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. Sole subprocessor: Fly.io. Contact: privacy@sundaymorning.software.</p>`
+<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. The only subprocessor is Fly.io. Contact: privacy@sundaymorning.software.</p>`
     )
   )
 );
@@ -308,13 +308,13 @@ app.get("/security", (c) =>
     trustPage(
       "Security",
       `<h2>Serving model</h2>
-<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, wraps every DOM op in try/catch, and fails open — if Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied ops replace, never duplicate.</p>
+<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, and wraps every DOM operation in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
 <h2>Access control</h2>
-<p>Variant writes, the dashboard, exports, and DSR endpoints are Bearer-gated. Optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify/events ingestion against poisoning. Supply chain: self-host the snippet from your own domain (<code>data-host</code>), or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
+<p>Variant writes, the dashboard, exports, and privacy endpoints require a Bearer token. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>
 <p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% Wilson confidence intervals. A deterministic holdout arm (default 10% per selector) preserves a control group for true incremental lift.</p>
 <h2>Data flows</h2>
-<p>Browser → Prism API (HTTPS only, HSTS via Fly edge) → SQLite on an encrypted Fly volume. No data leaves that path. DSR endpoints documented at <a href="/privacy">/privacy</a>.</p>`
+<p>Browser to Prism API (HTTPS only, HSTS via the Fly edge) to SQLite on an encrypted Fly volume. No data leaves that path. Privacy endpoints are documented at <a href="/privacy">/privacy</a>.</p>`
     )
   )
 );
@@ -324,13 +324,13 @@ app.get("/terms", (c) =>
     trustPage(
       "Terms",
       `<h2>Service</h2>
-<p>Prism provides client-side website personalization as hosted software. Plans: Shadow ($0, 10k visitors/mo, no personalization), Growth ($79/mo, 100k visitors/mo, 3 sites), Pro ($179/mo, 500k visitors/mo, 5 sites), Agency ($299/mo, 1M visitors/mo, unlimited sites, white-label).</p>
+<p>Prism provides client-side website personalization as hosted software. Plans: Shadow ($0, 10k visitors/mo, tracking only), Growth ($79/mo, 100k visitors/mo, 3 sites), Pro ($179/mo, 500k visitors/mo, 5 sites), Agency ($299/mo, 1M visitors/mo, unlimited sites, white-label).</p>
 <h2>Billing</h2>
-<p>Annual prepay: 2 months free (pay 10, get 12). Renewal price locked for 12 months. Overage: service continues; we contact you to right-size before any charge. Cancel anytime; you keep a full data export (<code>/api/export</code>).</p>
+<p>Annual prepay: 2 months free (pay 10, get 12). Renewal price locked for 12 months. Overage: service continues and we contact you to right-size before any charge. Cancel anytime. You keep a full data export (<code>/api/export</code>).</p>
 <h2>Availability</h2>
-<p>SLA on paid plans: 99.9% monthly uptime, measured at the Fly edge. Miss it and you get a service credit of 10x the downtime (1 hour down = 10 hours credited), applied automatically. Best-effort on Shadow. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
+<p>SLA on paid plans: 99.9% monthly uptime, measured at the Fly edge. Miss it and you get a service credit of 10x the downtime (1 hour down = 10 hours credited), applied automatically. Shadow is best-effort. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
 <h2>Liability</h2>
-<p>You approve every variant; Prism never generates visitor-facing content at request time. Standard SaaS liability cap: fees paid in the trailing 12 months.</p>`
+<p>You approve every variant. Prism never generates visitor-facing content at request time. Standard SaaS liability cap: fees paid in the trailing 12 months.</p>`
     )
   )
 );
