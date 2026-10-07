@@ -8,6 +8,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+    }
+  }
+</script>
 <style>
   :root {
     --ink: #111312;
@@ -69,10 +78,49 @@
   .btn.ghost:hover { background: #f0f0ec; }
 
   /* the prism diagram — the one bold element */
-  .prism-fig { margin-top: 72px; }
+  .prism-fig { margin-top: 72px; position: relative; container-type: inline-size; }
+  .prism-stage { position: relative; }
   .prism-fig svg { width: 100%; height: auto; display: block; }
   .prism-fig figcaption {
     margin-top: 14px; font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace;
+  }
+  .prism-stage canvas, .prism-legend, .prism-tag { display: none; }
+
+  /* 3D: Newton's darkened room. The SVG stays as the no-JS / no-WebGL fallback. */
+  .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage {
+    aspect-ratio: 1016 / 440; background: var(--ink); border-radius: 4px; overflow: hidden;
+  }
+  .prism-fig.is-loading svg, .prism-fig.is-3d svg { display: none; }
+  .prism-fig.is-3d .prism-stage canvas { display: block; width: 100%; height: 100%; }
+  .prism-fig.is-3d .prism-stage::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 95% at 42% 48%, transparent 58%, rgba(0,0,0,.38));
+  }
+  .prism-fig.is-3d .prism-legend { display: block; list-style: none; padding: 0; }
+  .prism-fig.is-3d .prism-legend li {
+    position: absolute; left: 0; top: 0; opacity: 0; white-space: nowrap; pointer-events: none;
+    font-size: 14px; will-change: transform, opacity;
+    color: color-mix(in srgb, #fff calc(var(--hit, 0) * 100%), #c9ccc6);
+  }
+  .prism-fig.is-3d .prism-legend li.more { color: #8b908c; }
+  .prism-fig.is-3d .prism-tag {
+    display: block; position: absolute; left: 0; top: 0; pointer-events: none;
+    font: 12px "IBM Plex Mono", monospace; color: #8b908c; opacity: 0;
+  }
+  @container (max-width: 639px) {
+    .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage { aspect-ratio: 3 / 2; }
+    .prism-fig.is-3d .prism-legend {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; margin-top: 16px;
+    }
+    .prism-fig.is-3d .prism-legend li,
+    .prism-fig.is-3d .prism-legend li.more {
+      position: static; opacity: 1; transform: none; font-size: 13px; color: var(--ink);
+      display: flex; align-items: center; gap: 8px; white-space: normal;
+    }
+    .prism-fig.is-3d .prism-legend li.more { color: var(--mute); }
+    .prism-fig.is-3d .prism-legend li::before {
+      content: ""; flex: none; width: 14px; height: 3px; border-radius: 2px; background: var(--c);
+    }
   }
   @media (prefers-reduced-motion: no-preference) {
     .beam-in { stroke-dasharray: 6 5; animation: beam 1.2s linear infinite; }
@@ -187,7 +235,8 @@
       <a class="btn ghost" href="/demo/" target="_blank">See the live demo</a>
     </div>
 
-    <figure class="prism-fig">
+    <figure class="prism-fig" data-prism>
+      <div class="prism-stage">
       <svg viewBox="0 0 1080 260" role="img" aria-label="A beam of white light enters a prism and exits as six colored bands, each labeled with a visitor persona.">
         <!-- incoming beam -->
         <line class="beam-in" x1="40" y1="130" x2="330" y2="130" stroke="#111312" stroke-width="2.5"/>
@@ -213,8 +262,28 @@
           <text x="896" y="222">…your segments</text>
         </g>
       </svg>
+      </div>
+      <ol class="prism-legend" aria-hidden="true">
+        <li style="--c: var(--r)">gift buyer</li>
+        <li style="--c: var(--o)">bundle builder</li>
+        <li style="--c: var(--y)">returning customer</li>
+        <li style="--c: var(--g)">category browser</li>
+        <li style="--c: var(--b)">first-time visitor</li>
+        <li style="--c: var(--v)" class="more">…your segments</li>
+      </ol>
+      <span class="prism-tag" aria-hidden="true">your website</span>
       <figcaption>fig. 1 — one page in, the right version out. Variants are pre-approved by you; the engine only chooses.</figcaption>
     </figure>
+    <script>
+      // Reserve the dark plate only where the 3D figure can run; fall back to the SVG if it never arrives.
+      (function (f) {
+        if (!f || !window.WebGL2RenderingContext) return;
+        f.classList.add("is-loading");
+        setTimeout(function () { if (!f.classList.contains("is-3d")) f.classList.remove("is-loading"); }, 6000);
+      })(document.querySelector("[data-prism]"));
+    </script>
+    <script type="module" src="/landing/prism-hero.js"
+      onerror="document.querySelector('[data-prism]').classList.remove('is-loading')"></script>
   </header>
 
   <section id="video" style="padding-top:64px">
