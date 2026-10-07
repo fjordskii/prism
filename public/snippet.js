@@ -187,7 +187,8 @@
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     applied = [];
-    try { localStorage.removeItem(cacheKey); } catch (e) {}
+    // Cache survives navigation so repeat views stay instant; identify() still
+    // invalidates it explicitly when traits change.
     decide();
   }
   ["pushState", "replaceState"].forEach(function (fn) {
@@ -201,13 +202,18 @@
   addEventListener("popstate", onNav);
 
   // Public API: prism.identify({orders: 2, affinity: 'woody'}) — host site enriches the profile.
+  // Traits change who this visitor is, so drop the cached decision and re-decide now.
   window.prism = {
     identify: function (traits) {
+      // Traits are known client-side now; re-decide immediately instead of
+      // waiting on the identify round-trip.
+      try { localStorage.removeItem(cacheKey); } catch (e) {}
+      decide();
       return fetch(origin + "/api/identify", {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({ visitorId: vid, site: site, traits: traits }),
-      }).then(function () { try { localStorage.removeItem(cacheKey); } catch (e) {} });
+      });
     },
     convert: function (selector) {
       track(currentVariantFor(document.querySelector(selector) || document.body), selector, "conversion");

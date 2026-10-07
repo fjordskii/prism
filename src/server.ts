@@ -285,7 +285,7 @@ app.delete("/api/visitors/:id", (c) => {
 // ---------- trust pages ----------
 const trustPage = (title: string, body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}: Prism</title>
 <style>body{font:15px/1.7 -apple-system,system-ui,sans-serif;max-width:720px;margin:48px auto;padding:0 20px;color:#1a1a1a}h1{font-size:24px}h2{font-size:17px;margin-top:28px}code{background:#f0f0ec;padding:1px 5px;border-radius:4px}</style></head>
-<body><h1>${title}</h1>${body}<p style="margin-top:40px;color:#777"><a href="/landing/">Back to Prism</a></p></body></html>`;
+<body><h1>${title}</h1>${body}<p style="margin-top:40px;color:#777"><a href="/">Prism</a> · <a href="/demo/">Demo</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a></p></body></html>`;
 
 app.get("/privacy", (c) =>
   c.html(
@@ -308,7 +308,7 @@ app.get("/security", (c) =>
     trustPage(
       "Security",
       `<h2>Serving model</h2>
-<p>The 6 KB snippet loads with <code>defer</code>, applies changes after first paint, and wraps every DOM operation in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
+<p>The 9 KB snippet (3 KB gzipped) loads with <code>defer</code>, applies changes after first paint, and wraps every DOM operation in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
 <h2>Access control</h2>
 <p>Variant writes, the dashboard, exports, and privacy endpoints require a Bearer token. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>

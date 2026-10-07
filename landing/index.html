@@ -21,7 +21,7 @@
   :root {
     --ink: #111312;
     --paper: #fdfdfb;
-    --mute: #6d726e;
+    --mute: #555a56;
     --hair: #e2e4df;
     --r: #e5453c;   /* spectrum red    */
     --o: #f08c1e;   /* spectrum orange */
@@ -31,7 +31,14 @@
     --v: #7b5ea7;   /* spectrum violet */
   }
   * { box-sizing: border-box; margin: 0; }
-  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+  :focus-visible { outline: 2px solid var(--b); outline-offset: 3px; border-radius: 2px; }
+  .skip {
+    position: absolute; left: 16px; top: -48px; z-index: 100; padding: 10px 16px;
+    background: var(--ink); color: var(--paper); font-size: 14px; text-decoration: none;
+    border-radius: 3px; transition: top .15s;
+  }
+  .skip:focus { top: 12px; }
   body {
     font: 400 16px/1.6 "IBM Plex Sans", system-ui, sans-serif;
     background: var(--paper); color: var(--ink);
@@ -166,12 +173,20 @@
     margin-top: 40px; background: var(--ink); color: #d8dbd6; border-radius: 4px;
     padding: 24px 28px; font-size: 14px; overflow-x: auto; line-height: 1.7;
   }
-  .snippet .c { color: #6d726e; }
+  .snippet .c { color: #9aa09a; }
   .snippet .s { color: var(--y); }
   .snippet .a { color: #8fb4f0; }
+  @media (max-width: 640px) { .snippet { font-size: 12px; padding: 18px 20px; } }
+  .snippet-wrap { position: relative; }
+  .snippet-copy {
+    position: absolute; top: 10px; right: 10px; font: 500 12px "IBM Plex Mono", monospace;
+    padding: 5px 12px; border: 1px solid #3a3d3b; border-radius: 3px;
+    background: transparent; color: #d8dbd6; cursor: pointer;
+  }
+  .snippet-copy:hover { border-color: #6d726e; background: #1d201e; }
 
   /* proof strip */
-  .proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 56px; border: 1px solid var(--hair); }
+  .proof { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 56px; border: 1px solid var(--hair); }
   .proof > div { padding: 28px; border-right: 1px solid var(--hair); }
   .proof > div:last-child { border-right: 0; }
   .proof .n { font-size: 34px; font-weight: 500; letter-spacing: -0.02em; }
@@ -203,7 +218,8 @@
   /* faq */
   details { border-top: 1px solid var(--hair); padding: 20px 0; }
   details:last-of-type { border-bottom: 1px solid var(--hair); }
-  summary { cursor: pointer; font-weight: 500; font-size: 16px; list-style: none; display: flex; justify-content: space-between; align-items: baseline; }
+  summary { cursor: pointer; font-weight: 500; font-size: 16px; display: flex; justify-content: space-between; align-items: baseline; }
+  summary::-webkit-details-marker { display: none; }
   summary::after { content: "+"; font-family: "IBM Plex Mono", monospace; color: var(--mute); }
   details[open] summary::after { content: "–"; }
   details p { margin-top: 12px; color: var(--mute); max-width: 60ch; font-size: 15px; }
@@ -213,10 +229,11 @@
   .final h2 { max-width: 18ch; }
 
   footer { padding: 40px 0 56px; font-size: 13px; color: var(--mute); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  footer a { color: var(--mute); }
+  footer a { color: var(--mute); padding: 8px 0; }
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div class="wrap">
 
   <nav>
@@ -224,14 +241,17 @@
     <div class="links">
       <a href="#how">How it works</a>
       <a href="#pricing">Pricing</a>
+      <a href="#integrations">Integrations</a>
       <a href="#faq">FAQ</a>
       <a href="/demo/" target="_blank">Live demo</a>
     </div>
     <a class="cta-nav" href="#install">Install</a>
   </nav>
 
+  <main id="main">
   <header class="hero">
-    <h1>Every visitor gets the page most likely to convert.</h1>
+    <div class="hero-text">
+    <h1>Website personalization, decided in under a millisecond.</h1>
     <p class="sub">
       Prism splits your site the way a prism splits light: one beam in, a spectrum out.
       You write a variant for each segment; the engine picks the best one per visitor,
@@ -239,7 +259,7 @@
     </p>
     <div class="actions">
       <a class="btn solid" href="#install">Install the snippet</a>
-      <a class="btn ghost" href="/demo/" target="_blank">See the live demo</a>
+      <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>
     </div>
     </div>
 
@@ -295,11 +315,12 @@
   </header>
 
   <section id="video" style="padding-top:64px">
-    <p class="kicker">Two minutes</p>
-    <h2>Watch a page become five</h2>
-    <div style="margin-top:40px;border:1px solid var(--hair);border-radius:4px;overflow:hidden">
-      <video src="/landing/prism-demo.mp4" controls preload="metadata" style="width:100%;display:block" aria-label="Prism demo: one site personalized for five visitor segments"></video>
+    <p class="kicker">32 seconds</p>
+    <h2>Watch a store personalize itself for five visitors</h2>
+    <div style="margin-top:40px;border:1px solid var(--hair);border-radius:4px;overflow:hidden;position:relative">
+      <video src="/landing/prism-demo.mp4" poster="/landing/prism-demo-poster.jpg" controls preload="none" style="width:100%;display:block" aria-label="Prism demo: one site personalized for five visitor segments"></video>
     </div>
+    <p class="lede" style="margin-top:16px">The same page, re-rendered live for five different visitor personas.</p>
   </section>
 
   <section id="how">
@@ -308,7 +329,7 @@
     <ol class="steps">
       <li>
         <h3>Paste one line</h3>
-        <p>A 6&nbsp;KB script tag, loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
+        <p>A 9&nbsp;KB script tag (3&nbsp;KB gzipped), loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
       </li>
       <li>
         <h3>Approve the variants</h3>
@@ -324,12 +345,14 @@
   <section id="install">
     <p class="kicker">Install</p>
     <h2>The whole integration</h2>
-    <pre class="snippet"><span class="c">&lt;!-- in your &lt;head&gt;, once --&gt;</span>
+    <div class="snippet-wrap">
+    <button id="copySnippet" class="snippet-copy">Copy</button>
+    <pre class="snippet" id="installSnippet"><span class="c">&lt;!-- in your &lt;head&gt;, once --&gt;</span>
 &lt;script defer src=<span class="s">"https://prism-personalize.fly.dev/snippet.js"</span> data-site=<span class="s">"yourstore"</span>&gt;&lt;/script&gt;
 
 <span class="c">&lt;!-- pinned + self-hosted (supply-chain control): --&gt;</span>
 <span class="c">&lt;script defer src="/prism-snippet.v1.js" data-host="https://prism-personalize.fly.dev"</span>
-<span class="c">  integrity="sha384-NZwm+IGHK1LRXSoFWVLaeUQjH0Es2Cbi9fmysYsv/zdm+QjcJDtpQ+2ybzL/1vFA"</span>
+<span class="c">  integrity="sha384-sEOeqZqZMmjwTITEcrUuexOimOEll5rmghxk6GjYE+NDqAxY0RijflDuYm6gty5i"</span>
 <span class="c">  data-site="yourstore" data-cookie="mybrand_vid"&gt;&lt;/script&gt;</span>
 
 <span class="c">// tell Prism who this visitor is, from data you already have</span>
@@ -337,10 +360,22 @@
 
 <span class="c">&lt;!-- mark the buttons that count as conversions --&gt;</span>
 &lt;button data-prism-convert=<span class="s">"#hero"</span>&gt;Add to cart&lt;/button&gt;</pre>
+    </div>
+    <script>
+      document.getElementById("copySnippet").addEventListener("click", function () {
+        var t = document.getElementById("installSnippet").innerText;
+        var b = this;
+        (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () {
+          b.textContent = "Copied";
+          setTimeout(function () { b.textContent = "Copy"; }, 1500);
+        }).catch(function () {});
+      });
+    </script>
     <div class="proof">
       <div><div class="n">&lt;1 ms</div><div class="l">warm-cache decision time</div></div>
-      <div><div class="n">6 KB</div><div class="l">snippet, zero dependencies</div></div>
+      <div><div class="n">3 KB</div><div class="l">snippet gzipped, zero dependencies</div></div>
       <div><div class="n">1 day</div><div class="l">from paste to first live variant</div></div>
+      <div><div class="n">0 px</div><div class="l">changed in shadow mode; lift projected first</div></div>
     </div>
   </section>
 
@@ -361,11 +396,11 @@
       <div class="isnt">
         <h3>What it never does</h3>
         <ul>
-          <li>Generate copy or designs on the fly. Only your approved variants ship</li>
-          <li>Block rendering or flash personalized content before paint</li>
-          <li>Require a redesign, a migration, or a CMS</li>
-          <li>Put a model in the request path. Decisions are rules plus statistics</li>
-          <li>Lock your data in. Visitors, variants, and events are yours to export</li>
+          <li><b>Never generates copy</b> or designs on the fly. Only your approved variants ship</li>
+          <li><b>Never blocks rendering</b> or flashes personalized content before paint</li>
+          <li><b>Never requires</b> a redesign, a migration, or a CMS</li>
+          <li><b>Never runs a model</b> in the request path. Decisions are rules plus statistics</li>
+          <li><b>Never locks in your data</b>. Visitors, variants, and events are yours to export</li>
         </ul>
       </div>
     </div>
@@ -474,11 +509,11 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
     <p class="kicker">FAQ</p>
     <h2>Questions</h2>
     <div style="margin-top:32px">
-      <details>
+      <details open>
         <summary>Will it slow my site down?</summary>
-        <p>No. The snippet loads deferred and applies changes after first paint. Repeat visits are served from a local cache, so the decision costs zero network time.</p>
+        <p>No. The snippet loads deferred and applies changes after first paint. Repeat visits read a local cache, so the decision costs zero network time.</p>
       </details>
-      <details>
+      <details open>
         <summary>Do visitors see a flash of the wrong content?</summary>
         <p>A first-ever pageview can show the default briefly, since we never block paint. Every visit after that applies the cached decision before the frame is visible.</p>
       </details>
@@ -503,13 +538,14 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
     <p class="lede">Paste the snippet, watch the segments appear, and turn on your first variant today.</p>
     <div class="actions" style="margin-top:32px;display:flex;gap:14px">
       <a class="btn solid" href="#install">Install the snippet</a>
-      <a class="btn ghost" href="/demo/" target="_blank">Try the live demo</a>
+      <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>
     </div>
   </section>
 
+  </main>
   <footer>
     <span>Prism: personalize every visit. A product of Sunday Morning Software (Prism Labs).</span>
-    <span><a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a> · <a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@sundaymorning.software">hello@sundaymorning.software</a></span>
+    <span><a href="/demo/" target="_blank">Live demo</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a> · <a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@sundaymorning.software">hello@sundaymorning.software</a></span>
   </footer>
 
 </div>

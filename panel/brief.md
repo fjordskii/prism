@@ -12,7 +12,7 @@ Client-side personalization engine. One `<script defer>` tag personalizes any we
 per visitor: pre-approved content variants, rule-based audiences, a Bayesian bandit
 (Thompson sampling) that automatically shifts traffic to winning variants per segment.
 
-- Snippet: ~6 KB vanilla JS, zero deps, runs after first paint. Decision cache in
+- Snippet: 9 KB vanilla JS (3 KB gzipped), zero deps, runs after first paint. Decision cache in
   localStorage (5 min) → repeat views personalize with zero network latency.
 - Identity: first-party cookie + host-supplied traits via `prism.identify({...})`.
 - Variants: pre-approved HTML/ops authored in an admin dashboard or via REST API
@@ -37,7 +37,7 @@ per visitor: pre-approved content variants, rule-based audiences, a Bayesian ban
 - DSR endpoints are now token-gated (same auth as /admin): GET/DELETE
   /api/visitors/:id?site=…&token=demo-panel-2026
 - Supply chain: immutable versioned snippet at /snippet.v1.js (max-age=1y,
-  immutable) with published SRI hash sha384-NZwm+IGHK1LRXSoFWVLaeUQjH0Es2Cbi9fmysYsv/zdm+QjcJDtpQ+2ybzL/1vFA;
+immutable) with published SRI hash sha384-sEOeqZqZMmjwTITEcrUuexOimOEll5rmghxk6GjYE+NDqAxY0RijflDuYm6gty5i;
   or self-host the snippet from your own domain with data-host + data-cookie
   overrides (white-label: custom API origin + custom cookie name).
 - Source-available: github.com/fjordskii/prism (BSL 1.1 → Apache 2.0 in 2030);
