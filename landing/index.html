@@ -51,7 +51,7 @@
   .wordmark { font-weight: 600; font-size: 17px; letter-spacing: .02em; text-decoration: none; }
   .wordmark em { font-style: normal; color: var(--b); }
   nav .links { display: flex; gap: 28px; font-size: 14px; }
-  nav .links a { text-decoration: none; color: var(--mute); }
+  @media (max-width: 640px) { nav { flex-wrap: wrap; row-gap: 8px; } nav .links { gap: 16px; font-size: 13px; } }
   nav .links a:hover { color: var(--ink); }
   nav .cta-nav {
     font-size: 14px; font-weight: 500; text-decoration: none;
@@ -60,15 +60,18 @@
   nav .cta-nav:hover { background: var(--ink); color: var(--paper); }
 
   /* ---------- hero ---------- */
-  header.hero { padding: 96px 0 72px; border-bottom: 1px solid var(--hair); }
+  header.hero {
+    padding: 64px 0 64px; border-bottom: 1px solid var(--hair);
+    display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: center;
+  }
   .hero h1 {
-    font-size: clamp(40px, 6vw, 68px); font-weight: 500;
-    line-height: 1.05; letter-spacing: -0.02em; max-width: 14ch;
+    font-size: clamp(34px, 4.4vw, 52px); font-weight: 500;
+    line-height: 1.08; letter-spacing: -0.02em; max-width: 16ch;
   }
   .hero .sub {
-    margin-top: 24px; max-width: 46ch; font-size: 18px; color: var(--mute); font-weight: 300;
+    margin-top: 20px; max-width: 44ch; font-size: 17px; color: var(--mute); font-weight: 300;
   }
-  .hero .actions { margin-top: 36px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .hero .actions { margin-top: 28px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .btn {
     font: 500 15px "IBM Plex Sans", sans-serif; text-decoration: none;
     padding: 12px 24px; border-radius: 3px; border: 1px solid var(--ink);
@@ -78,17 +81,20 @@
   .btn.ghost:hover { background: #f0f0ec; }
 
   /* the prism diagram — the one bold element */
-  .prism-fig { margin-top: 72px; position: relative; container-type: inline-size; }
+  .prism-fig { margin-top: 0; position: relative; container-type: inline-size; }
   .prism-stage { position: relative; }
   .prism-fig svg { width: 100%; height: auto; display: block; }
   .prism-fig figcaption {
     margin-top: 14px; font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace;
   }
-  .prism-stage canvas, .prism-legend, .prism-tag { display: none; }
-
   /* 3D: Newton's darkened room. The SVG stays as the no-JS / no-WebGL fallback. */
   .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage {
-    aspect-ratio: 1016 / 440; background: var(--ink); border-radius: 4px; overflow: hidden;
+    aspect-ratio: 1 / 1; background: var(--ink); border-radius: 4px; overflow: hidden;
+  }
+  @media (max-width: 860px) {
+    header.hero { grid-template-columns: 1fr; gap: 40px; padding-top: 48px; }
+    .hero h1 { font-size: clamp(30px, 8.5vw, 40px); }
+    .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage { aspect-ratio: 1016 / 440; }
   }
   .prism-fig.is-loading svg, .prism-fig.is-3d svg { display: none; }
   .prism-fig.is-3d .prism-stage canvas { display: block; width: 100%; height: 100%; }
@@ -183,7 +189,8 @@
   .twocol .isnt li::marker { color: var(--r); }
 
   /* pricing */
-  .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px; }
+  .price-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 48px; }
+  @media (max-width: 1000px) { .price-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 720px) { .price-grid { grid-template-columns: 1fr; } }
   .tier { border: 1px solid var(--hair); padding: 32px 28px; border-radius: 4px; display: flex; flex-direction: column; }
   .tier.hot { border-color: var(--ink); }
@@ -224,15 +231,16 @@
   </nav>
 
   <header class="hero">
-    <h1>Show every visitor the version of your site most likely to convert.</h1>
+    <h1>Every visitor gets the page most likely to convert.</h1>
     <p class="sub">
-      Prism splits your website the way a prism splits light: one beam in, a spectrum out.
+      Prism splits your site the way a prism splits light: one beam in, a spectrum out.
       You write a variant for each segment; the engine picks the best one per visitor,
-      from a local cache, in under a millisecond.
+      from cache, in under a millisecond.
     </p>
     <div class="actions">
       <a class="btn solid" href="#install">Install the snippet</a>
       <a class="btn ghost" href="/demo/" target="_blank">See the live demo</a>
+    </div>
     </div>
 
     <figure class="prism-fig" data-prism>
@@ -367,7 +375,7 @@
     <p class="kicker">Pricing</p>
     <h2>Free until it proves itself</h2>
     <p class="lede">Run Prism in shadow mode for a week. It tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on. Annual prepay: two months free, renewal price locked for 12 months. If you go over your visitor cap, we contact you to right-size before any charge.</p>
-    <div class="price-grid" style="grid-template-columns:repeat(4,1fr)">
+    <div class="price-grid">
       <div class="tier">
         <h3>Shadow</h3>
         <div class="amount">$0</div>
