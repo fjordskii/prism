@@ -20,6 +20,12 @@ function authorized(c: { req: { header: (n: string) => string | undefined; query
   if (allowDemo && DEMO_TOKEN && tok === DEMO_TOKEN) return true;
   return false;
 }
+// Admin token: any site. Demo token: the demo site only (it is published for
+// prospects, so it must never read or erase another tenant's data).
+function authorizedForSite(c: Parameters<typeof authorized>[0], site: string) {
+  if (authorized(c)) return true;
+  return site === "demo" && authorized(c, true);
+}
 app.use("/api/variants*", async (c, next) => {
   if (c.req.method === "GET") return next();
   if (authorized(c)) return next();
@@ -42,6 +48,12 @@ app.use("/api/variants*", async (c, next) => {
     }
   }
   return c.json({ error: "unauthorized" }, 401);
+});
+// Malformed JSON bodies are a client error, not a 500.
+app.onError((err, c) => {
+  if (err instanceof SyntaxError) return c.json({ error: "invalid JSON body" }, 400);
+  console.error(err);
+  return c.json({ error: "internal error" }, 500);
 });
 app.use("/admin", async (c, next) => {
   if (!authorized(c, true)) return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
@@ -133,7 +145,8 @@ app.post("/api/decide", async (c) => {
 
 // ---------- events ----------
 // Integrity: a conversion is only recorded if this visitor has an impression for the
-// same variant+selector — kills orphaned conversions and most casual poisoning.
+// same variant+selector (or a control impression for control conversions) — kills
+// orphaned conversions and most casual poisoning. Unknown event types are dropped.
 app.post("/api/events", async (c) => {
   const body = await c.req.json<{
     site: string;
@@ -152,10 +165,12 @@ app.post("/api/events", async (c) => {
   let recorded = 0;
   const tx = db.transaction(() => {
     for (const e of body.events) {
-      if (e.type === "conversion" && e.variantId != null) {
-        if (!hasImp.get(body.site, body.visitorId, e.selector, e.variantId, e.variantId)) continue;
+      if (!e || (e.type !== "impression" && e.type !== "conversion") || typeof e.selector !== "string") continue;
+      const variantId = e.variantId ?? null;
+      if (e.type === "conversion") {
+        if (!hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) continue;
       }
-      stmt.run(body.site, body.visitorId, e.variantId, e.selector, e.type, now);
+      stmt.run(body.site, body.visitorId, variantId, e.selector, e.type, now);
       recorded++;
     }
   });
@@ -248,8 +263,8 @@ app.get("/api/stats", (c) => {
 
 // ---------- export / DSR ----------
 app.get("/api/export", (c) => {
-  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
   const site = c.req.query("site") ?? "demo";
+  if (!authorizedForSite(c, site)) return c.json({ error: "unauthorized" }, 401);
   return c.json({
     site,
     exportedAt: new Date().toISOString(),
@@ -262,7 +277,7 @@ app.get("/api/export", (c) => {
 // GDPR/CCPA: export or erase one visitor across visitors+events. Token-gated —
 // these read/destroy PII-adjacent data, so they use the same auth as /admin.
 app.use("/api/visitors/*", async (c, next) => {
-  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
+  if (!authorizedForSite(c, c.req.query("site") ?? "demo")) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 app.get("/api/visitors/:id", (c) => {
@@ -279,6 +294,7 @@ app.delete("/api/visitors/:id", (c) => {
     db.prepare("DELETE FROM events WHERE visitor_id = ? AND site = ?").run(id, site);
     db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
   });
+  tx(); // the erasure must actually run
   return c.json({ ok: true, deleted: id });
 });
 

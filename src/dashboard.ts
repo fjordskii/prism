@@ -117,6 +117,13 @@ function humanize(audience) {
     return rules.map(r => r.field + ' ' + (OPSYM[r.op] || r.op) + ' ' + JSON.stringify(r.value)).join(' AND ');
   } catch { return audience; }
 }
+// datetime-local wants local wall time; toISOString() is UTC and shifts by the zone offset.
+function toLocalInput(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
 function editVariant(v) {
   document.getElementById('b-name').value = v.name;
   document.getElementById('b-selector').value = v.selector;
@@ -129,8 +136,8 @@ function editVariant(v) {
   let html = '';
   try { const ops = JSON.parse(v.ops); html = (ops.find(o => o.op === 'html') || {}).html || ''; } catch {}
   document.getElementById('b-html').value = html;
-  document.getElementById('b-starts').value = v.starts_at ? new Date(v.starts_at).toISOString().slice(0,16) : '';
-  document.getElementById('b-ends').value = v.ends_at ? new Date(v.ends_at).toISOString().slice(0,16) : '';
+  document.getElementById('b-starts').value = toLocalInput(v.starts_at);
+  document.getElementById('b-ends').value = toLocalInput(v.ends_at);
   document.getElementById('b-msg').textContent = 'Editing "' + v.name + '". Create saves as a new variant; pause the old one.';
   document.getElementById('builder').scrollIntoView({ behavior: 'smooth' });
 }
@@ -189,6 +196,8 @@ async function toggle(id) { await authFetch('/api/variants/' + id + '/toggle', {
 async function del(id) { if (confirm('Delete variant?')) { await authFetch('/api/variants/' + id, { method: 'DELETE' }); load(); } }
 function authFetch(url, opts) {
   opts = opts || {};
+  // Writes need the admin (or demo) token; without it every create/pause/delete 401s.
+  if (token) opts.headers = Object.assign({}, opts.headers, { authorization: 'Bearer ' + token });
   return fetch(url, opts);
 }
 document.getElementById('b-create').addEventListener('click', async () => {

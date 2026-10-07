@@ -37,6 +37,18 @@ Environment:
 
 Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts`
 
+## End-to-end tests
+
+```sh
+bun install
+bun run test:e2e            # gating suite: landing, demo personas, admin, API, regressions (desktop + 390px mobile)
+bun run test:e2e:bugbash    # open bug repros; expected to fail until fixed
+```
+
+The runner (`e2e`, Playwright Chromium) starts `tests/support/serve.ts` on a free port with a fresh seeded
+SQLite DB and throwaway tokens. One test uses an `agent.*` step on a GitHub Copilot model
+(`npx e2e login github-copilot`); everything else is deterministic. Latest report: `docs/e2e-report.md`.
+
 ## Install the snippet on your site
 
 ```html

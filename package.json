@@ -4,12 +4,22 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@ai-sdk/openai": "^4.0.87",
+    "@ai-sdk/openai-compatible": "^3.0.65",
+    "@e2e-dev/web": "^0.13.0",
+    "@types/bun": "latest",
+    "ai": "^7",
+    "e2e": "^0.18.0"
   },
   "peerDependencies": {
     "typescript": "^7"
   },
   "dependencies": {
     "hono": "^4.13.13"
+  },
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "test:e2e": "e2e run --exclude-tag bugbash",
+    "test:e2e:bugbash": "e2e run --tag bugbash"
   }
 }

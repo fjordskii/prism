@@ -29,10 +29,25 @@
   .sim button { display: block; width: 100%; margin: 4px 0; padding: 7px; font: inherit; background: #333; color: #fff; border: 0; border-radius: 6px; cursor: pointer; text-align: left; }
   .sim button:hover { background: #4c6ef5; }
   .sim .reset:hover { background: #e03131; }
+  @media (max-width: 640px) {
+    nav { flex-wrap: wrap; gap: 8px 16px; padding: 14px 20px; }
+    /* banner in flow so it never covers the nav; simulator as a bottom sheet */
+    .demo-banner { position: static !important; transform: none !important; max-width: none !important; border-radius: 0 !important; opacity: 1 !important; }
+    body { padding-bottom: 150px; }
+    #hero { padding: 56px 20px; }
+    #hero h1 { font-size: 32px; }
+    section { padding: 36px 20px; }
+    #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile { padding: 16px; }
+    .sim { left: 0; right: 0; bottom: 0; width: auto; border-radius: 10px 10px 0 0; padding: 8px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .sim b { grid-column: 1 / -1; margin-bottom: 2px; }
+    .sim button { margin: 0; padding: 6px; }
+  }
   #toast { position: fixed; top: 16px; right: 16px; background: #2b2620; color: #fff; padding: 10px 18px; border-radius: 8px; font: 13px -apple-system, sans-serif; opacity: 0; transition: opacity .3s; z-index: 99; }
 </style>
 </head>
 <body>
+<div class="demo-banner" style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;background:#111;color:#fff;font:12px/1.4 -apple-system,sans-serif;padding:8px 16px;border-radius:99px;opacity:.92;max-width:92vw;text-align:center">This is the <b>Prism demo store</b>. Pick a persona in the simulator panel and watch the page adapt. <a href="/" style="color:#8fb4f0">How Prism works</a></div>
 <nav>
   <span class="logo">LINDEN</span>
   <a href="#">Shop all</a><a href="#">Bundles</a><a href="#">Scents</a><a href="#">Journal</a>
@@ -83,7 +98,6 @@
   <button class="reset" onclick="wipe()">Wipe cookie + cache</button>
 </div>
 <script defer src="/snippet.js" data-site="demo"></script>
-<div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;background:#111;color:#fff;font:12px/1.4 -apple-system,sans-serif;padding:8px 16px;border-radius:99px;opacity:.92;max-width:92vw;text-align:center">This is the <b>Prism demo store</b>. Pick a persona (bottom right) and watch the page adapt. <a href="/" style="color:#8fb4f0">How Prism works</a></div>
 <script>
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -91,6 +105,8 @@ function toast(msg) {
   setTimeout(() => t.style.opacity = 0, 2500);
 }
 async function setPersona(p) {
+  // identify() merges traits, so "reset" must start a fresh visitor instead.
+  if (p === 'new') return wipe();
   const traits = {
     new: {},
     bundle: { cartItems: 3, visits: 2 },

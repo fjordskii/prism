@@ -374,7 +374,7 @@
 
 <span class="c">&lt;!-- pinned + self-hosted (supply-chain control): --&gt;</span>
 <span class="c">&lt;script defer src="/prism-snippet.v1.js" data-host="https://prism-personalize.fly.dev"</span>
-<span class="c">  integrity="sha384-sEOeqZqZMmjwTITEcrUuexOimOEll5rmghxk6GjYE+NDqAxY0RijflDuYm6gty5i"</span>
+<span class="c">  integrity="sha384-V/Bgc8O9UnDqwFlNGbxREnZdqRxRSaRQFvQFDzrmmTHt7zdm/tF/8M4esF5yJWY8"</span>
 <span class="c">  data-site="yourstore" data-cookie="mybrand_vid"&gt;&lt;/script&gt;</span>
 
 <span class="c">// tell Prism who this visitor is, from data you already have</span>
@@ -491,9 +491,10 @@
         <pre class="snippet" style="margin-top:16px"><span class="c">// 1) Shopify Liquid, real fields only (login-gated customers)</span>
 &lt;script&gt;
 {% if customer %}
+{% assign last_order_s = customer.last_order.created_at | date: '%s' %}
   <span class="a">prism</span>.identify({
     orders: {{ customer.orders_count }},
-    lastOrderDays: {{ 'now' | date: '%s' | minus: customer.last_order.created_at | date: '%s' | divided_by: 86400 }},
+    lastOrderDays: {{ 'now' | date: '%s' | minus: last_order_s | divided_by: 86400 }},
     tags: {{ customer.tags | json }}
   });
 {% endif %}
