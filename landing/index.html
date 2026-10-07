@@ -126,6 +126,7 @@
 
   /* split table: what it is / isn't */
   .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; margin-top: 48px; }
+  .twocol > div { min-width: 0; }
   @media (max-width: 720px) { .twocol { grid-template-columns: 1fr; gap: 32px; } }
   .twocol h3 { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
   .twocol ul { padding-left: 18px; color: var(--mute); font-size: 15px; }
@@ -139,7 +140,6 @@
   .tier { border: 1px solid var(--hair); padding: 32px 28px; border-radius: 4px; display: flex; flex-direction: column; }
   .tier.hot { border-color: var(--ink); }
   .tier h3 { font-size: 17px; font-weight: 600; }
-  .tier .amount { font-size: 36px; font-weight: 500; margin: 14px 0 4px; letter-spacing: -0.02em; }
   .tier .per { font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace; }
   .tier ul { list-style: none; padding: 0; margin: 24px 0 28px; font-size: 14px; color: var(--mute); flex: 1; }
   .tier li { padding: 6px 0; border-top: 1px solid var(--hair); }
