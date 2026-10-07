@@ -73,18 +73,11 @@
   .hero {
     position: relative; isolation: isolate; overflow: hidden;
     display: flex; flex-direction: column;
-    min-height: min(820px, 100svh); padding-top: 72px;
+    height: 100svh; min-height: 640px; padding-top: 72px;
     background: var(--ink); color: var(--paper);
   }
   .hero > .wrap { width: 100%; position: relative; z-index: 1; }
   .hero-text { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-top: 40px; padding-bottom: 40px; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 28px;
-    font-size: 13px; color: #d8dbd6; text-decoration: none;
-    padding: 6px 14px 6px 10px; border: 1px solid #303431; border-radius: 999px; background: rgba(255,255,255,.03);
-  }
-  .pill:hover { border-color: #4a4f4b; background: rgba(255,255,255,.06); }
-  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--g); box-shadow: 0 0 0 3px rgba(42,157,110,.22); }
   .hero h1 {
     font-size: clamp(36px, 4.8vw, 60px); font-weight: 500;
     line-height: 1.04; letter-spacing: -0.025em; max-width: 13ch;
@@ -144,7 +137,7 @@
 
   /* phones and tablets: copy, then the scene in flow, then proof */
   @media (max-width: 899px) {
-    .hero { min-height: 0; padding-top: 60px; }
+    .hero { height: auto; min-height: 0; padding-top: 60px; }
     .hero-text { flex: none; padding-top: 36px; padding-bottom: 4px; }
     .hero h1 { font-size: clamp(34px, 9vw, 46px); }
     .hero .sub { font-size: 16px; }
@@ -268,7 +261,6 @@
 <main id="main">
   <header class="hero">
     <div class="wrap hero-text">
-      <a class="pill" href="#pricing"><span class="dot" aria-hidden="true"></span>Free in shadow mode: see your lift first <span aria-hidden="true">→</span></a>
       <h1>Website personalization, decided in under a millisecond.</h1>
       <p class="sub">
         Prism splits your site the way a prism splits light: one beam in, a spectrum out.
