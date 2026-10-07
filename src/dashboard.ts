@@ -26,7 +26,7 @@ export function dashboard(): string {
   #lift { margin-top: 12px; padding: 12px 16px; background: #f4f7ff; border-radius: 8px; display: none; }
 </style></head><body>
 <h1>Prism — personalization admin</h1>
-<p>Site: <select id="sitePicker" style="font:inherit;padding:4px 8px;border:1px solid #ccc;border-radius:6px"></select> <input id="newSite" placeholder="new site slug" style="width:140px"> <button id="addSite" style="padding:4px 10px">Add</button> · <a href="/" target="_blank">open demo storefront ↗</a> · <a id="export" href="#">export data (JSON)</a></p>
+<p>Site: <select id="sitePicker" style="font:inherit;padding:4px 8px;border:1px solid #ccc;border-radius:6px"></select> <input id="newSite" placeholder="new site slug" style="width:140px"> <button id="addSite" style="padding:4px 10px">Add</button> · <a href="/demo/" target="_blank">open demo storefront ↗</a> · <a id="export" href="#">export data (JSON)</a></p>
 
 <h2>Performance <span style="font-weight:400;color:#777;font-size:13px" id="holdout"></span></h2>
 <div id="lift"></div>

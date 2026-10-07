@@ -351,7 +351,10 @@ app.use("/snippet.js", async (c, next) => {
 });
 app.use("/snippet.js", serveStatic({ path: "./public/snippet.js" }));
 app.use("/landing/*", serveStatic({ root: "./landing", rewriteRequestPath: (p) => p.replace(/^\/landing/, "") || "/index.html" }));
-app.get("/landing", (c) => c.redirect("/landing/"));
-app.use("/*", serveStatic({ root: "./demo" }));
+app.get("/landing", (c) => c.redirect("/"));
+app.use("/demo/*", serveStatic({ root: "./demo", rewriteRequestPath: (p) => p.replace(/^\/demo/, "") || "/index.html" }));
+app.get("/demo", (c) => c.redirect("/demo/"));
+// Root = the selling lander.
+app.get("/", serveStatic({ path: "./landing/index.html" }));
 
 export default app;
