@@ -50,35 +50,47 @@
 
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
 
-  /* ---------- nav ---------- */
-  nav {
-    display: flex; align-items: baseline; justify-content: space-between;
-    padding: 22px 0; border-bottom: 1px solid var(--hair);
-  }
+  /* ---------- nav: floats over the dark hero ---------- */
+  .site-nav { position: absolute; top: 0; left: 0; right: 0; z-index: 10; color: var(--paper); }
+  .site-nav .wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; height: 72px; }
   .wordmark { font-weight: 600; font-size: 17px; letter-spacing: .02em; text-decoration: none; }
-  .wordmark em { font-style: normal; color: var(--b); }
-  nav .links { display: flex; gap: 28px; font-size: 14px; }
-  @media (max-width: 640px) { nav { flex-wrap: wrap; row-gap: 8px; } nav .links { gap: 16px; font-size: 13px; } }
-  nav .links a:hover { color: var(--ink); }
-  nav .cta-nav {
-    font-size: 14px; font-weight: 500; text-decoration: none;
-    border: 1px solid var(--ink); padding: 7px 16px; border-radius: 3px;
+  .wordmark em { font-style: normal; color: #8fb4f0; }
+  .site-nav .links { display: flex; gap: 28px; font-size: 14px; }
+  .site-nav .links a { text-decoration: none; color: #b9bdb8; }
+  .site-nav .links a:hover { color: var(--paper); }
+  .cta-nav {
+    font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap;
+    background: var(--paper); color: var(--ink); padding: 8px 16px; border-radius: 3px;
   }
-  nav .cta-nav:hover { background: var(--ink); color: var(--paper); }
+  .cta-nav:hover { background: #e6e8e3; }
+  @media (max-width: 720px) {
+    .site-nav .wrap { height: 60px; gap: 16px; }
+    .site-nav .links { gap: 18px; }
+    .site-nav .links a:not(.keep) { display: none; }
+  }
 
-  /* ---------- hero ---------- */
-  header.hero {
-    padding: 64px 0 64px; border-bottom: 1px solid var(--hair);
-    display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: center;
+  /* ---------- hero: Newton's darkened room. The prism scene is the background, not a card. ---------- */
+  .hero {
+    position: relative; isolation: isolate; overflow: hidden;
+    display: flex; flex-direction: column;
+    min-height: min(820px, 100svh); padding-top: 72px;
+    background: var(--ink); color: var(--paper);
   }
+  .hero > .wrap { width: 100%; position: relative; z-index: 1; }
+  .hero-text { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-top: 40px; padding-bottom: 40px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 28px;
+    font-size: 13px; color: #d8dbd6; text-decoration: none;
+    padding: 6px 14px 6px 10px; border: 1px solid #303431; border-radius: 999px; background: rgba(255,255,255,.03);
+  }
+  .pill:hover { border-color: #4a4f4b; background: rgba(255,255,255,.06); }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--g); box-shadow: 0 0 0 3px rgba(42,157,110,.22); }
   .hero h1 {
-    font-size: clamp(34px, 4.4vw, 52px); font-weight: 500;
-    line-height: 1.08; letter-spacing: -0.02em; max-width: 16ch;
+    font-size: clamp(36px, 4.8vw, 60px); font-weight: 500;
+    line-height: 1.04; letter-spacing: -0.025em; max-width: 13ch;
   }
-  .hero .sub {
-    margin-top: 20px; max-width: 44ch; font-size: 17px; color: var(--mute); font-weight: 300;
-  }
-  .hero .actions { margin-top: 28px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .hero .sub { margin-top: 22px; max-width: 40ch; font-size: 17px; color: #a9aea8; font-weight: 300; }
+  .hero .actions { margin-top: 32px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .btn {
     font: 500 15px "IBM Plex Sans", sans-serif; text-decoration: none;
     padding: 12px 24px; border-radius: 3px; border: 1px solid var(--ink);
@@ -86,54 +98,67 @@
   .btn.solid { background: var(--ink); color: var(--paper); }
   .btn.solid:hover { background: #2a2d2b; }
   .btn.ghost:hover { background: #f0f0ec; }
+  .hero .btn.solid { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+  .hero .btn.solid:hover { background: #e6e8e3; }
+  .hero .btn.ghost { color: var(--paper); border-color: #4a4f4b; }
+  .hero .btn.ghost:hover { background: #1d201e; border-color: #6d726e; }
 
-  /* the prism diagram — the one bold element */
-  .prism-fig { margin-top: 0; position: relative; container-type: inline-size; }
-  .prism-stage { position: relative; }
-  .prism-fig svg { width: 100%; height: auto; display: block; }
-  .prism-fig figcaption {
-    margin-top: 14px; font-size: 13px; color: var(--mute); font-family: "IBM Plex Mono", monospace;
+  .hero-proof {
+    list-style: none; padding: 22px 0 30px; border-top: 1px solid #262a27;
+    display: grid; grid-template-columns: repeat(4, auto); justify-content: space-between; gap: 16px 32px;
   }
-  /* 3D: Newton's darkened room. The SVG stays as the no-JS / no-WebGL fallback. */
-  .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage {
-    aspect-ratio: 1 / 1; background: var(--ink); border-radius: 4px; overflow: hidden;
+  .hero-proof b { display: block; font-size: 26px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.2; }
+  .hero-proof span { display: block; margin-top: 4px; font: 12px/1.5 "IBM Plex Mono", monospace; color: #8b908c; }
+
+  /* the scene fills the hero; .prism-frame is where the JS fits the prism, fan and labels */
+  .prism-fig { position: absolute; inset: 0; z-index: 0; margin: 0; }
+  .prism-stage { position: absolute; inset: 0; }
+  .prism-frame {
+    position: absolute; pointer-events: none; top: 104px; bottom: 116px;
+    left: calc(max(32px, 50% - 508px) + 0.47 * min(100% - 64px, 1016px));
+    right: max(32px, 50% - 508px);
   }
-  @media (max-width: 860px) {
-    header.hero { grid-template-columns: 1fr; gap: 40px; padding-top: 48px; }
-    .hero h1 { font-size: clamp(30px, 8.5vw, 40px); }
-    .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage { aspect-ratio: 1016 / 440; }
-  }
+  .prism-frame svg { width: 100%; height: 100%; display: block; }
   .prism-fig.is-loading svg, .prism-fig.is-3d svg { display: none; }
-  .prism-fig.is-3d .prism-stage canvas { display: block; width: 100%; height: 100%; }
-  .prism-fig.is-3d .prism-stage::after {
+  .prism-stage canvas { display: block; width: 100%; height: 100%; }
+  .prism-stage::after {
     content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: radial-gradient(120% 95% at 42% 48%, transparent 58%, rgba(0,0,0,.38));
+    background:
+      linear-gradient(90deg, var(--ink) 0, rgba(17,19,18,.82) 26%, rgba(17,19,18,0) 50%),
+      linear-gradient(0deg, var(--ink) 0, rgba(17,19,18,0) 24%),
+      radial-gradient(120% 95% at 62% 48%, transparent 58%, rgba(0,0,0,.38));
   }
-  .prism-fig.is-3d .prism-legend { display: block; list-style: none; padding: 0; }
-  .prism-fig.is-3d .prism-legend li {
+  .prism-labels, .prism-tag { display: none; }
+  .prism-fig.is-3d .prism-labels { display: block; list-style: none; padding: 0; }
+  .prism-fig.is-3d .prism-labels li {
     position: absolute; left: 0; top: 0; opacity: 0; white-space: nowrap; pointer-events: none;
     font-size: 14px; will-change: transform, opacity;
     color: color-mix(in srgb, #fff calc(var(--hit, 0) * 100%), #c9ccc6);
   }
-  .prism-fig.is-3d .prism-legend li.more { color: #8b908c; }
+  .prism-fig.is-3d .prism-labels li.more { color: #8b908c; }
+  .prism-fig.is-sparse .prism-labels li { transition: opacity .25s; }
   .prism-fig.is-3d .prism-tag {
     display: block; position: absolute; left: 0; top: 0; pointer-events: none;
     font: 12px "IBM Plex Mono", monospace; color: #8b908c; opacity: 0;
   }
-  @container (max-width: 639px) {
-    .prism-fig.is-loading .prism-stage, .prism-fig.is-3d .prism-stage { aspect-ratio: 3 / 2; }
-    .prism-fig.is-3d .prism-legend {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; margin-top: 16px;
+
+  /* phones and tablets: copy, then the scene in flow, then proof */
+  @media (max-width: 899px) {
+    .hero { min-height: 0; padding-top: 60px; }
+    .hero-text { flex: none; padding-top: 36px; padding-bottom: 4px; }
+    .hero h1 { font-size: clamp(34px, 9vw, 46px); }
+    .hero .sub { font-size: 16px; }
+    .prism-fig { position: relative; inset: auto; }
+    .prism-stage { position: relative; height: clamp(300px, 84vw, 460px); }
+    .prism-frame { top: 16px; bottom: 16px; left: 20px; right: 20px; }
+    .prism-stage::after {
+      background:
+        linear-gradient(180deg, var(--ink) 0, rgba(17,19,18,0) 14%, rgba(17,19,18,0) 86%, var(--ink) 100%),
+        radial-gradient(120% 95% at 50% 50%, transparent 60%, rgba(0,0,0,.3));
     }
-    .prism-fig.is-3d .prism-legend li,
-    .prism-fig.is-3d .prism-legend li.more {
-      position: static; opacity: 1; transform: none; font-size: 13px; color: var(--ink);
-      display: flex; align-items: center; gap: 8px; white-space: normal;
-    }
-    .prism-fig.is-3d .prism-legend li.more { color: var(--mute); }
-    .prism-fig.is-3d .prism-legend li::before {
-      content: ""; flex: none; width: 14px; height: 3px; border-radius: 2px; background: var(--c);
-    }
+    .prism-fig.is-3d .prism-labels li { font-size: 13px; }
+    .hero-proof { grid-template-columns: 1fr 1fr; justify-content: stretch; gap: 20px 24px; padding-top: 24px; }
+    .hero-proof b { font-size: 22px; }
   }
   @media (prefers-reduced-motion: no-preference) {
     .beam-in { stroke-dasharray: 6 5; animation: beam 1.2s linear infinite; }
@@ -185,14 +210,6 @@
   }
   .snippet-copy:hover { border-color: #6d726e; background: #1d201e; }
 
-  /* proof strip */
-  .proof { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 56px; border: 1px solid var(--hair); }
-  .proof > div { padding: 28px; border-right: 1px solid var(--hair); }
-  .proof > div:last-child { border-right: 0; }
-  .proof .n { font-size: 34px; font-weight: 500; letter-spacing: -0.02em; }
-  .proof .l { font-size: 13px; color: var(--mute); margin-top: 6px; font-family: "IBM Plex Mono", monospace; }
-  @media (max-width: 720px) { .proof { grid-template-columns: 1fr; } .proof > div { border-right: 0; border-bottom: 1px solid var(--hair); } }
-
   /* split table: what it is / isn't */
   .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; margin-top: 48px; }
   .twocol > div { min-width: 0; }
@@ -234,64 +251,67 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<div class="wrap">
-
-  <nav>
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap">
     <a class="wordmark" href="/">Prism<em>.</em></a>
     <div class="links">
       <a href="#how">How it works</a>
-      <a href="#pricing">Pricing</a>
+      <a class="keep" href="#pricing">Pricing</a>
       <a href="#integrations">Integrations</a>
       <a href="#faq">FAQ</a>
-      <a href="/demo/" target="_blank">Live demo</a>
+      <a class="keep" href="/demo/" target="_blank">Live demo</a>
     </div>
     <a class="cta-nav" href="#install">Install</a>
-  </nav>
+  </div>
+</nav>
 
-  <main id="main">
+<main id="main">
   <header class="hero">
-    <div class="hero-text">
-    <h1>Website personalization, decided in under a millisecond.</h1>
-    <p class="sub">
-      Prism splits your site the way a prism splits light: one beam in, a spectrum out.
-      You write a variant for each segment; the engine picks the best one per visitor,
-      from cache, in under a millisecond.
-    </p>
-    <div class="actions">
-      <a class="btn solid" href="#install">Install the snippet</a>
-      <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>
-    </div>
+    <div class="wrap hero-text">
+      <a class="pill" href="#pricing"><span class="dot" aria-hidden="true"></span>Free in shadow mode: see your lift first <span aria-hidden="true">→</span></a>
+      <h1>Website personalization, decided in under a millisecond.</h1>
+      <p class="sub">
+        Prism splits your site the way a prism splits light: one beam in, a spectrum out.
+        You write a variant for each segment; the engine picks the best one per visitor,
+        from cache, in under a millisecond.
+      </p>
+      <div class="actions">
+        <a class="btn solid" href="#install">Install the snippet</a>
+        <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>
+      </div>
     </div>
 
     <figure class="prism-fig" data-prism>
       <div class="prism-stage">
-      <svg viewBox="0 0 1080 260" role="img" aria-label="A beam of white light enters a prism and exits as six colored bands, each labeled with a visitor persona.">
-        <!-- incoming beam -->
-        <line class="beam-in" x1="40" y1="130" x2="330" y2="130" stroke="#111312" stroke-width="2.5"/>
-        <text x="40" y="112" font-family="IBM Plex Mono" font-size="13" fill="#6d726e">your website</text>
-        <!-- prism -->
-        <polygon points="360,40 470,220 250,220" fill="none" stroke="#111312" stroke-width="2.5" stroke-linejoin="round"/>
-        <text x="330" y="248" font-family="IBM Plex Mono" font-size="13" fill="#6d726e">prism</text>
-        <!-- spectrum bands -->
-        <g stroke-width="7" stroke-linecap="round">
-          <line class="band" x1="470" y1="118" x2="880" y2="48"  stroke="#e5453c"/>
-          <line class="band" x1="470" y1="122" x2="880" y2="82"  stroke="#f08c1e"/>
-          <line class="band" x1="470" y1="126" x2="880" y2="116" stroke="#e9c46a"/>
-          <line class="band" x1="470" y1="130" x2="880" y2="150" stroke="#2a9d6e"/>
-          <line class="band" x1="470" y1="134" x2="880" y2="184" stroke="#3a6fd8"/>
-          <line class="band" x1="470" y1="138" x2="880" y2="218" stroke="#7b5ea7"/>
-        </g>
-        <g font-family="IBM Plex Sans" font-size="14" fill="#111312">
-          <text x="896" y="52">gift buyer</text>
-          <text x="896" y="86">bundle builder</text>
-          <text x="896" y="120">returning customer</text>
-          <text x="896" y="154">category browser</text>
-          <text x="896" y="188">first-time visitor</text>
-          <text x="896" y="222">…your segments</text>
-        </g>
-      </svg>
+        <div class="prism-frame">
+        <svg viewBox="30 20 1100 250" role="img" aria-label="A beam of white light enters a prism and exits as six colored bands, each labeled with a visitor segment. You approve every variant; the engine only picks.">
+          <!-- incoming beam -->
+          <line class="beam-in" x1="40" y1="130" x2="330" y2="130" stroke="#fdfdfb" stroke-width="2.5"/>
+          <text x="40" y="108" font-family="IBM Plex Mono" font-size="20" fill="#8b908c">your site</text>
+          <!-- prism -->
+          <polygon points="360,40 470,220 250,220" fill="none" stroke="#fdfdfb" stroke-width="2.5" stroke-linejoin="round"/>
+          <text x="330" y="252" font-family="IBM Plex Mono" font-size="20" fill="#8b908c">prism</text>
+          <!-- spectrum bands -->
+          <g stroke-width="7" stroke-linecap="round">
+            <line class="band" x1="470" y1="118" x2="880" y2="48"  stroke="#e5453c"/>
+            <line class="band" x1="470" y1="122" x2="880" y2="82"  stroke="#f08c1e"/>
+            <line class="band" x1="470" y1="126" x2="880" y2="116" stroke="#e9c46a"/>
+            <line class="band" x1="470" y1="130" x2="880" y2="150" stroke="#2a9d6e"/>
+            <line class="band" x1="470" y1="134" x2="880" y2="184" stroke="#3a6fd8"/>
+            <line class="band" x1="470" y1="138" x2="880" y2="218" stroke="#7b5ea7"/>
+          </g>
+          <g font-family="IBM Plex Sans" font-size="24" fill="#d8dbd6">
+            <text x="896" y="56">gift buyer</text>
+            <text x="896" y="90">bundle builder</text>
+            <text x="896" y="124">returning customer</text>
+            <text x="896" y="158">category browser</text>
+            <text x="896" y="192">first-time visitor</text>
+            <text x="896" y="226">…your segments</text>
+          </g>
+        </svg>
+        </div>
       </div>
-      <ol class="prism-legend" aria-hidden="true">
+      <ol class="prism-labels" aria-hidden="true">
         <li style="--c: var(--r)">gift buyer</li>
         <li style="--c: var(--o)">bundle builder</li>
         <li style="--c: var(--y)">returning customer</li>
@@ -299,11 +319,10 @@
         <li style="--c: var(--b)">first-time visitor</li>
         <li style="--c: var(--v)" class="more">…your segments</li>
       </ol>
-      <span class="prism-tag" aria-hidden="true">your website</span>
-      <figcaption>fig. 1. One page in, the right version out. You approve every variant; the engine only picks.</figcaption>
+      <span class="prism-tag" aria-hidden="true">your site</span>
     </figure>
     <script>
-      // Reserve the dark plate only where the 3D figure can run; fall back to the SVG if it never arrives.
+      // Hide the SVG only where the 3D figure can run; fall back to it if the module never arrives.
       (function (f) {
         if (!f || !window.WebGL2RenderingContext) return;
         f.classList.add("is-loading");
@@ -312,7 +331,18 @@
     </script>
     <script type="module" src="/landing/prism-hero.js"
       onerror="document.querySelector('[data-prism]').classList.remove('is-loading')"></script>
+
+    <div class="wrap">
+      <ul class="hero-proof">
+        <li><b>&lt;1 ms</b><span>warm-cache decision</span></li>
+        <li><b>3 KB</b><span>gzipped, zero dependencies</span></li>
+        <li><b>1 day</b><span>paste to first live variant</span></li>
+        <li><b>$0</b><span>shadow mode, 10k visitors/mo</span></li>
+      </ul>
+    </div>
   </header>
+
+  <div class="wrap">
 
   <section id="video" style="padding-top:64px">
     <p class="kicker">32 seconds</p>
@@ -371,12 +401,6 @@
         }).catch(function () {});
       });
     </script>
-    <div class="proof">
-      <div><div class="n">&lt;1 ms</div><div class="l">warm-cache decision time</div></div>
-      <div><div class="n">3 KB</div><div class="l">snippet gzipped, zero dependencies</div></div>
-      <div><div class="n">1 day</div><div class="l">from paste to first live variant</div></div>
-      <div><div class="n">0 px</div><div class="l">changed in shadow mode; lift projected first</div></div>
-    </div>
   </section>
 
   <section>
@@ -542,12 +566,14 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
     </div>
   </section>
 
-  </main>
+  </div>
+</main>
+
+<div class="wrap">
   <footer>
     <span>Prism: personalize every visit. A product of Sunday Morning Software (Prism Labs).</span>
     <span><a href="/demo/" target="_blank">Live demo</a> · <a href="/privacy">Privacy</a> · <a href="/security">Security</a> · <a href="/terms">Terms</a> · <a href="/admin" target="_blank">Dashboard</a> · <a href="mailto:hello@sundaymorning.software">hello@sundaymorning.software</a></span>
   </footer>
-
 </div>
 </body>
 </html>

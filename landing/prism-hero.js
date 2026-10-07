@@ -1,7 +1,9 @@
 // fig. 1 — the hero prism, rendered with three.js.
 //
 // White light enters the left face and each band is traced through the glass with Snell's law.
-// Band IORs are solved so the exit beams land in an evenly spaced column beside their labels.
+// Band IORs are solved so the exit beams land in an evenly spaced column, and each segment label
+// sits at the end of its own beam at every viewport size; there is no separate legend. The bench
+// is fitted into the `.prism-frame` box, so CSS decides where the prism sits in the hero.
 // Particles are visitors: white on the way in, coloured once the prism has routed them, slowed
 // inside the glass by 1/n. Progressive enhancement: the static SVG stays in the markup and is
 // shown whenever this module fails to load or WebGL2 is unavailable.
@@ -17,6 +19,10 @@ const V2 = THREE.Vector2;
 const rad = THREE.MathUtils.degToRad;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const ease = (x) => 1 - (1 - x) ** 3;
+const smooth = (a, b, x) => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
 
 // ---------- optics (world units; every beam lies in the z = 0 plane) ----------
 const SIDE = 2.2;
@@ -31,24 +37,38 @@ const ENTRY = BASE_L.clone().lerp(APEX, 0.4);
 const IN_DIR = new V2(Math.cos(rad(19.5)), Math.sin(rad(19.5))); // ~minimum deviation
 const IN_LEN = 11; // the white beam starts well off-canvas
 const BEAM_START = ENTRY.clone().addScaledVector(IN_DIR, -IN_LEN);
-const X_END = 5.6; // every band terminates on this vertical line
+const X_END = 3.8; // every band terminates on this vertical line
 const RED_IOR = 1.47;
-const BAND_GAP = 0.37; // vertical spacing of band ends: the label rhythm
+const BAND_GAP = 0.6; // vertical spacing of band ends: the label rhythm (wide enough for phones)
+const FIT_X0 = -1.6; // the bench fitted into the frame starts on the white beam just left of the prism
+const IN_FADE = [3.6, 1.2]; // the white beam fades in from darkness between these distances before the prism
 
 // ---------- presentation ----------
 const FOV = 24;
 const BASE_YAW = -0.38; // camera sits left of the beam so the entry face reads in 3D
 const BASE_PITCH = 0.2;
-const COMPACT_W = 640; // below this the labels become a legend under the plate
-const LABEL_GAP = 16; // px between band end and its label
+const LABEL_GAP = 14; // px between band end and its label
+const MIN_LABEL_GAP = 17; // px between band ends below which only the latest hit label shows
+const MAX_PIXELS = 2.4e6; // drawing-buffer budget: full-bleed canvases drop DPR instead of stalling
 const SPEED = 2.7; // visitor speed in air, world units / s
 const POOL = 72;
 
-/** Refract unit vector `d` through a surface with unit normal `n` facing against `d`. */
+/**
+ * NeutralToneMapping subtracts a toe offset driven by the darkest channel, which crushes the page's
+ * --ink to near black and leaves a seam where the canvas meets CSS. Invert that toe for dark greys
+ * (offset = x - 6.25x² below 0.08, else 0.04) so the room renders as exactly the CSS colour.
+ */
+function preToneMap(c) {
+  const m = Math.min(c.r, c.g, c.b);
+  const off = m < 0.04 ? 0.4 * Math.sqrt(m) - m : 0.04;
+  return new THREE.Color(c.r + off, c.g + off, c.b + off);
+}
+
+/** Refract unit vector `d` through a surface with unit normal `n` facing against `d`; null on TIR. */
 function refract(d, n, eta) {
   const cos = -d.dot(n);
   const k = 1 - eta * eta * (1 - cos * cos);
-  if (k < 0) throw new Error("total internal reflection");
+  if (k < 0) return null;
   return d.clone().multiplyScalar(eta).addScaledVector(n, eta * cos - Math.sqrt(k));
 }
 
@@ -57,10 +77,12 @@ function hitLine(p, d, a, b) {
   return p.clone().addScaledVector(d, a.clone().sub(p).cross(e) / d.cross(e));
 }
 
+/** Trace one band through the prism; null when it is totally internally reflected at the exit face. */
 function traceBand(ior) {
   const inside = refract(IN_DIR, N_ENTRY, 1 / ior);
   const exit = hitLine(ENTRY, inside, BASE_R, APEX);
   const out = refract(inside, N_EXIT.clone().negate(), ior);
+  if (!out) return null;
   const end = exit.clone().addScaledVector(out, (X_END - exit.x) / out.x);
   return { ior, exit, end };
 }
@@ -71,8 +93,9 @@ function solveIor(y) {
   let hi = 1.8;
   for (let k = 0; k < 48; k++) {
     const m = (lo + hi) / 2;
-    if (traceBand(m).end.y > y) lo = m;
-    else hi = m;
+    const t = traceBand(m);
+    if (t && t.end.y > y) lo = m;
+    else hi = m; // below target, or TIR: both mean n is too high
   }
   return (lo + hi) / 2;
 }
@@ -138,7 +161,8 @@ const UV_VERT = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 
-function beamMaterial(color, intensity, length, tail) {
+/** `head` = [far, near]: fade in from darkness over that distance band before the beam's end. */
+function beamMaterial(color, intensity, length, tail, head = [0, 0]) {
   return new THREE.ShaderMaterial({
     ...additive,
     uniforms: {
@@ -146,12 +170,14 @@ function beamMaterial(color, intensity, length, tail) {
       uIntensity: { value: intensity },
       uLen: { value: length },
       uTail: { value: tail },
+      uHead: { value: new V2(...head) },
       uProgress: { value: 0 },
       uTime: { value: 0 },
     },
     vertexShader: UV_VERT,
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
+      uniform vec2 uHead;
       uniform float uIntensity, uLen, uTail, uProgress, uTime;
       varying vec2 vUv;
       void main() {
@@ -160,6 +186,7 @@ function beamMaterial(color, intensity, length, tail) {
         float halo = exp(-v * v * 4.5) * 0.2;
         float reveal = clamp((uProgress - vUv.x) * uLen / 0.3, 0.0, 1.0);
         float tail = mix(1.0, 1.0 - 0.55 * vUv.x, uTail);
+        if (uHead.x > 0.0) tail *= smoothstep(uHead.x, uHead.y, (1.0 - vUv.x) * uLen);
         float shimmer = 1.0 + 0.05 * sin(vUv.x * uLen * 9.0 - uTime * 7.0);
         gl_FragColor = vec4(uColor * uIntensity * (core + halo) * reveal * tail * shimmer, 1.0);
       }`,
@@ -290,14 +317,16 @@ if (fig) {
 
 function mount(fig) {
   const stage = fig.querySelector(".prism-stage");
-  const items = [...fig.querySelectorAll(".prism-legend li")];
+  const items = [...fig.querySelectorAll(".prism-labels li")];
+  const frameEl = fig.querySelector(".prism-frame");
   const tag = fig.querySelector(".prism-tag");
   const ink = new THREE.Color(getComputedStyle(fig).getPropertyValue("--ink").trim());
 
-  // Bands: colours come from the legend markup, so the page has one source of truth.
+  // Bands: colours come from the label markup, so the page has one source of truth.
   const yRed = traceBand(RED_IOR).end.y;
   const bands = items.map((li, i) => {
     const ray = traceBand(i === 0 ? RED_IOR : solveIor(yRed - i * BAND_GAP));
+    if (!ray) throw new Error("band spacing exceeds the prism's dispersion");
     const color = new THREE.Color(getComputedStyle(li).getPropertyValue("--c").trim());
     color.multiplyScalar(1 / Math.max(color.r, color.g, color.b)); // light, not paint: full value
     return {
@@ -325,7 +354,8 @@ function mount(fig) {
   stage.append(canvas);
 
   const scene = new THREE.Scene();
-  scene.background = ink;
+  const room = preToneMap(ink);
+  scene.background = room;
   const camera = new THREE.PerspectiveCamera(FOV, 2, 0.1, 200);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -345,7 +375,7 @@ function mount(fig) {
   const backdrop = new THREE.Mesh(
     new THREE.PlaneGeometry(80, 40),
     new THREE.ShaderMaterial({
-      uniforms: { uBg: { value: ink }, uLine: { value: new THREE.Color("#1f2320") } },
+      uniforms: { uBg: { value: room }, uLine: { value: preToneMap(new THREE.Color("#191c1a")) } },
       vertexShader: /* glsl */ `
         varying vec2 vW;
         void main() {
@@ -420,7 +450,7 @@ function mount(fig) {
 
   // ----- light -----
   const white = new THREE.Color(1, 1, 1);
-  const inBeam = new THREE.Mesh(ribbon(BEAM_START, ENTRY, 0.065, 0.065), beamMaterial(white, 1.7, IN_LEN, 0));
+  const inBeam = new THREE.Mesh(ribbon(BEAM_START, ENTRY, 0.065, 0.065), beamMaterial(white, 1.7, IN_LEN, 0, IN_FADE));
   const innerFan = new THREE.Mesh(
     strip(ENTRY, first.exit, ENTRY, last.exit, 12, 12),
     sheetMaterial(stops, { opacity: 0.85, whiteness: 1, fade: 0, length: first.lenIn }),
@@ -468,7 +498,7 @@ function mount(fig) {
   });
 
   // Motes, scattered around the beam paths; the shader lights the ones a beam crosses.
-  const segs = [{ a: ENTRY.clone().addScaledVector(IN_DIR, -9), b: ENTRY, c: white }].concat(
+  const segs = [{ a: ENTRY.clone().addScaledVector(IN_DIR, -IN_FADE[0]), b: ENTRY, c: white }].concat(
     bands.map((b) => ({ a: b.exit, b: b.end, c: b.color })),
   );
   const motesMat = motesMaterial(segs.length);
@@ -539,6 +569,7 @@ function mount(fig) {
         if (++p.seg > 2) {
           p.live = false;
           b.flash = 1;
+          lastHit = p.band;
         }
       }
       if (!p.live) {
@@ -548,8 +579,10 @@ function mount(fig) {
       const u = p.s / lens[p.seg];
       let mix = 0;
       let fade = 1;
-      if (p.seg === 0) tmp.lerpVectors(BEAM_START, ENTRY, u);
-      else if (p.seg === 1) {
+      if (p.seg === 0) {
+        tmp.lerpVectors(BEAM_START, ENTRY, u);
+        fade = smooth(IN_FADE[0], IN_FADE[1], IN_LEN - p.s); // visitors emerge with the beam
+      } else if (p.seg === 1) {
         tmp.lerpVectors(ENTRY, b.exit, u);
         mix = u;
       } else {
@@ -568,40 +601,86 @@ function mount(fig) {
     for (let k = 0; k < POOL; k++) gIntensity.setX(PART0 + k, 0);
   }
 
-  // ----- layout: fit the optical bench into the plate, leave room for the label column -----
-  const view = { w: 1, h: 1, cx: 0, cy: 0, D: 20, leftX: -5, compact: false, yaw: 0, pitch: 0 };
-  const bounds = {
-    x0: -3.9,
-    x1: X_END,
-    y0: last.end.y - 0.25,
-    y1: APEX.y + 0.3,
+  // ----- layout: fit the optical bench into .prism-frame; the label column lives inside the frame -----
+  const view = { w: 1, h: 1, cx: 0, cy: 0, D: 20, leftX: -5, sparse: false, yaw: 0, pitch: 0 };
+  let lastHit = 0; // the label shown when band ends are too close for all of them (narrow phones)
+  const fitY1 = APEX.y + 0.3;
+  const fitY0 = last.end.y - 0.25;
+  const fitPts = [
+    new THREE.Vector3(FIT_X0, ENTRY.y + ((FIT_X0 - ENTRY.x) * IN_DIR.y) / IN_DIR.x, 0),
+    new THREE.Vector3(0, fitY1, 0),
+    new THREE.Vector3(X_END, fitY0, 0),
+    ...[BASE_L, BASE_R, APEX].flatMap((p) => [new THREE.Vector3(p.x, p.y, zf), new THREE.Vector3(p.x, p.y, -zf)]),
+    ...bands.map((b) => new THREE.Vector3(b.end.x, b.end.y, 0)),
+  ];
+
+  const v3 = new THREE.Vector3();
+  const project = (v) => {
+    v3.copy(v).project(camera);
+    return [((v3.x + 1) / 2) * view.w, ((1 - v3.y) / 2) * view.h];
   };
+  const toScreen = (p) => project(v3.set(p.x, p.y, 0));
+
   function layout() {
     const w = stage.clientWidth;
     const h = stage.clientHeight;
     if (!w || !h) return;
     view.w = w;
     view.h = h;
-    view.compact = fig.clientWidth < COMPACT_W;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (w * h)));
     renderer.setPixelRatio(dpr);
     renderer.setSize(w, h, false);
     composer.setPixelRatio(dpr);
     composer.setSize(w, h);
     glowMat.uniforms.uViewH.value = motesMat.uniforms.uViewH.value = h * dpr;
-
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    const labelPx = view.compact ? 24 : Math.max(...items.map((li) => li.offsetWidth)) + LABEL_GAP + 28;
-    const frac = (w - labelPx) / w;
-    const spanX = bounds.x1 - bounds.x0;
-    const hh = Math.max((bounds.y1 - bounds.y0) / 0.8 / 2, spanX / frac / 2 / camera.aspect);
-    const hw = hh * camera.aspect;
-    view.D = hh / Math.tan(rad(FOV / 2));
-    view.leftX = bounds.x0 - (2 * hw * frac - spanX) / 2;
-    view.cx = view.leftX + hw;
-    view.cy = (bounds.y0 + bounds.y1) / 2;
-    if (view.compact) for (const li of items) li.style.transform = li.style.opacity = "";
+
+    // Target box in stage pixels: the frame, minus the label column on its right.
+    const s = stage.getBoundingClientRect();
+    const f = frameEl.getBoundingClientRect();
+    const labelPx = Math.max(...items.map((li) => li.offsetWidth)) + LABEL_GAP;
+    const box = { x0: f.left - s.left, x1: f.right - s.left - labelPx, y0: f.top - s.top, y1: f.bottom - s.top };
+    const boxW = box.x1 - box.x0;
+    const boxH = box.y1 - box.y0;
+
+    // Orthographic first guess, then project the real bench and correct for yaw, pitch and
+    // perspective. Fit at rest: pointer parallax only nudges the camera around this pose.
+    const k = Math.min(boxW / (X_END - FIT_X0), boxH / (fitY1 - fitY0));
+    const tanHalf = Math.tan(rad(FOV / 2));
+    view.D = h / 2 / k / tanHalf;
+    view.cx = (FIT_X0 + X_END) / 2;
+    view.cy = (fitY0 + fitY1) / 2;
+    const { yaw, pitch } = view;
+    view.yaw = view.pitch = 0;
+    for (let i = 0; i < 5; i++) {
+      placeCamera();
+      camera.updateMatrixWorld();
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (const p of fitPts) {
+        const [x, y] = project(p);
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+      const ppu = h / 2 / (view.D * tanHalf); // px per world unit at the target
+      view.cx -= ((box.x0 + box.x1) / 2 - (x0 + x1) / 2) / ppu;
+      view.cy += ((box.y0 + box.y1) / 2 - (y0 + y1) / 2) / ppu;
+      view.D /= Math.min(boxW / (x1 - x0), boxH / (y1 - y0));
+    }
+    placeCamera();
+    camera.updateMatrixWorld();
+    const ends = bands.map((b) => toScreen(b.end)[1]);
+    const minGap = Math.min(...ends.slice(1).map((y, i) => y - ends[i]));
+    view.sparse = minGap < MIN_LABEL_GAP;
+    fig.classList.toggle("is-sparse", view.sparse);
+    view.leftX = view.cx - (w / 2 / (h / 2 / (view.D * tanHalf))) * 1.4; // generous: spawns stay off-screen
+    view.yaw = yaw;
+    view.pitch = pitch;
   }
 
   function placeCamera() {
@@ -615,32 +694,23 @@ function mount(fig) {
     camera.lookAt(view.cx, view.cy, 0);
   }
 
-  const v3 = new THREE.Vector3();
-  const toScreen = (p) => {
-    v3.set(p.x, p.y, 0).project(camera);
-    return [((v3.x + 1) / 2) * view.w, ((1 - v3.y) / 2) * view.h];
-  };
-
   function placeLabels(tagReveal) {
+    // Centred just under the white beam, which rises to the right, so it never sits on the hero
+    // copy to the upper left. On phones the prism sits too close to the stage edge for the tag to
+    // clear both beam and glass, and the copy right above already says "one beam in": hide it.
     const tagAt = ENTRY.clone().addScaledVector(IN_DIR, (-1.7 - ENTRY.x) / IN_DIR.x);
-    let [tx, ty] = toScreen(tagAt);
-    // Up-left of the anchor stays clear of a beam rising to the right. When that would leave the
-    // plate, sit below the beam where it enters instead, which is just as clear.
-    const flip = tx - tag.offsetWidth < 12;
-    if (flip) {
-      const [ex, ey] = toScreen(ENTRY);
-      ty += ((ey - ty) * (12 - tx)) / (ex - tx);
-      tx = 12;
-    }
-    const shift = flip ? "translate(0, 14px)" : "translate(-100%, calc(-100% - 16px))";
-    tag.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) ${shift}`;
-    tag.style.opacity = tagReveal.toFixed(3);
-    if (view.compact) return;
+    const [ax, ay] = toScreen(tagAt);
+    const [ex, ey] = toScreen(ENTRY);
+    const half = tag.offsetWidth / 2;
+    const clear = 10 + Math.abs((ey - ay) / (ex - ax)) * half; // the tilted beam is closest at one end
+    tag.style.transform = `translate3d(${ax.toFixed(1)}px, ${ay.toFixed(1)}px, 0) translate(-50%, ${clear.toFixed(1)}px)`;
+    tag.style.opacity = ax < 12 + half ? "0" : tagReveal.toFixed(3);
     const pts = bands.map((b) => toScreen(b.end));
     const col = Math.max(...pts.map((p) => p[0])) + LABEL_GAP; // one aligned column
     bands.forEach((b, i) => {
+      const shown = view.sparse && i !== lastHit ? 0 : clamp01((b.progress - 0.85) / 0.17);
       b.li.style.transform = `translate3d(${col.toFixed(1)}px, ${pts[i][1].toFixed(1)}px, 0) translateY(-50%)`;
-      b.li.style.opacity = clamp01((b.progress - 0.85) / 0.17).toFixed(3);
+      b.li.style.opacity = shown.toFixed(3);
       b.li.style.setProperty("--hit", b.flash.toFixed(3));
     });
   }
