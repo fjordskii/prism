@@ -65,10 +65,13 @@ bun run test:e2e            # gating suite: landing, demo personas, admin, API, 
 bun run test:e2e:bugbash    # open bug repros; expected to fail until fixed
 ```
 
-The runner (`e2e`, Playwright Chromium) starts `tests/support/serve.ts` on a free port with a fresh seeded
+The `e2e` CLI needs Node.js 22.22.3+ or 24.8+ on `PATH` (`module.registerHooks`). `bun run` launches that CLI; the app process is still Bun.
+
+The runner (Playwright Chromium) starts `tests/support/serve.ts` on a free port with a fresh seeded
 SQLite DB and throwaway tokens. Admin tests sign in with that admin token (`?token=` and `Authorization: Bearer`).
-`DEV_AUTH_EMAIL` is set on the test server so a session-cookie check can hit `/auth/dev-login`. One test uses an
-`agent.*` step on a GitHub Copilot model (`npx e2e login github-copilot`); everything else is deterministic.
+`DEV_AUTH_EMAIL` is set on the test server so a session-cookie check can hit `/auth/dev-login`. The gating suite
+is deterministic. `e2e.config.ts` still names a GitHub Copilot model for any future `agent.*` step
+(`npx e2e login github-copilot`); the returning-customer check clicks the persona itself.
 Latest report: `docs/e2e-report.md`.
 
 ## Install the snippet on your site

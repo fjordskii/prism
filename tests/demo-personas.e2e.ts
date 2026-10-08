@@ -12,12 +12,6 @@ describe('demo storefront personalization', { tags: ['demo'] }, () => {
     await expect.poll(() => browser.evaluate(() => typeof (window as any).prism?.identify)).toBe('function');
   });
 
-  test('returning customer sees the subscribe offer', async ({ screen }) => {
-    await screen.getByRole('button', 'Returning customer').tap();
-    await expect(screen.getByText('Welcome back.', { exact: false })).toBeVisible({ timeout: 10_000 });
-    await expect(screen.getByRole('button', 'Start subscription')).toBeVisible();
-  });
-
   test('gift buyer sees the gift hero after one persona click', async ({ screen }) => {
     await screen.getByRole('button', 'Gift buyer').tap();
     await expect(screen.getByRole('heading', 'The gift that fills a room.', { level: 1 })).toBeVisible({ timeout: 10_000 });
@@ -49,9 +43,12 @@ describe('demo storefront personalization', { tags: ['demo'] }, () => {
     expect(await horizontalOverflow(browser)).toBeLessThanOrEqual(0);
   });
 
-  test('agent: a shopper picks the returning-customer persona and gets the subscribe offer', { tags: ['agent'] }, async ({ agent, screen }) => {
-    await agent.act('In the persona simulator, choose the returning customer persona');
+  // The original step drove this through an agent model (GitHub Copilot). The
+  // outcome is asserted directly so the gate does not depend on a subscription login.
+  test('returning customer gets the subscribe-and-save offer', async ({ screen }) => {
+    await screen.getByRole('button', 'Returning customer').tap();
     await expect(screen.getByText('Welcome back.', { exact: false })).toBeVisible({ timeout: 10_000 });
-    await agent.assert('the page offers a subscribe-and-save subscription to a returning customer');
+    await expect(screen.getByText('Subscribe & save 15%', { exact: false })).toBeVisible();
+    await expect(screen.getByRole('button', 'Start subscription')).toBeVisible();
   });
 });

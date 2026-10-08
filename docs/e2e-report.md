@@ -24,7 +24,9 @@ this branch actually serves.
 
 Accounts and `READONLY_TOKENS` are still deployment-wide (the gap called out on `/architecture`). The demo token is the credential scoped to one site.
 
-Gating command: `bun run test:e2e` (desktop + mobile). Totals are filled in after that run.
+Gating command: `bun run test:e2e` (desktop 1280×720 and mobile 390×844), Node.js 24.21.0, e2e 0.18.0.
+
+**58 passed / 0 failed** (29 tests × 2 targets). The returning-customer check is deterministic: this environment's GitHub token cannot sign in to Copilot (it is a GitHub App installation token, and Copilot rejected it). The test still requires "Welcome back.", "Subscribe & save 15%", and the Start subscription button, which is the outcome the agent step was judging. `bun run test:e2e:bugbash` is still the open PRISM-003 repro and is not part of this total.
 
 # Prism e2e + bug bash report: 2026-10-07
 
