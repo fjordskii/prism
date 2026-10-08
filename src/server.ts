@@ -13,6 +13,7 @@ import {
   accountRole, sessionEmail, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
 } from "./auth";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { windowCounter, clientIp } from "./ratelimit";
 
 // Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
@@ -149,25 +150,53 @@ app.post("/api/identify", async (c) => {
 const HOLDOUT_PCT = Number(process.env.HOLDOUT_PCT ?? 10);
 
 // Metering: decide counts visitors even before first identify, so usage is honest.
+// Only registered sites are metered (a sites row from registerSite / the plan
+// endpoint / seed, or existing variants), so made-up site names write nothing.
 const insMeter = db.prepare("INSERT OR IGNORE INTO visitors (id, site, first_seen, last_seen, traits) VALUES (?,?,?,?,'{}')");
 const touchMeter = db.prepare("UPDATE visitors SET last_seen = ? WHERE id = ? AND site = ?");
+const knownSite = db.prepare("SELECT 1 FROM sites WHERE site = ? UNION ALL SELECT 1 FROM variants WHERE site = ? LIMIT 1");
+
+// Abuse limits (per client IP + site). The request cap answers 429 with empty
+// decisions so the snippet fails open; the new-visitor cap stops one client from
+// inflating a tenant's metered visitor count with random visitor ids (over the cap
+// the decision is still served, the visitor just isn't metered).
+const DECIDE_PER_MIN = Number(process.env.DECIDE_RATE_PER_MIN ?? 600);
+const NEW_VISITORS_PER_HOUR = Number(process.env.DECIDE_NEW_VISITORS_PER_HOUR ?? 120);
+const decideRate = windowCounter(DECIDE_PER_MIN, 60_000);
+const newVisitorRate = windowCounter(NEW_VISITORS_PER_HOUR, 3_600_000);
+const SITE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 app.post("/api/decide", async (c) => {
   const body = await c.req.json<{ visitorId: string; site: string; selectors?: string[] }>();
-  if (!body.visitorId || !body.site) return c.json({ error: "visitorId and site required" }, 400);
+  if (!body || typeof body.visitorId !== "string" || typeof body.site !== "string" || !body.visitorId || !body.site)
+    return c.json({ error: "visitorId and site required", decisions: [] }, 400);
+  if (body.visitorId.length > 128 || !SITE_RE.test(body.site))
+    return c.json({ error: "invalid visitorId or site", decisions: [] }, 400);
+
+  const bucket = clientIp((n) => c.req.header(n)) + "|" + body.site;
+  if (!decideRate.hit(bucket)) return c.json({ error: "rate_limited", decisions: [] }, 429);
+
+  // Unregistered site: nothing to personalize and nothing to meter. Same shape as
+  // a registered site with no matching variant, so site existence isn't revealed.
+  if (!knownSite.get(body.site, body.site)) return c.json({ decisions: [], traits: {} });
+
+  // Plan and usage are tenant data: only for callers allowed to read this site.
+  const canRead = await authorizedForSite(c, body.site);
 
   const now = Date.now();
-  insMeter.run(body.visitorId, body.site, now, now);
-  touchMeter.run(now, body.visitorId, body.site);
-
-  const visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
+  let visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
+  if (visitor) touchMeter.run(now, body.visitorId, body.site);
+  else if (newVisitorRate.under(bucket) && insMeter.run(body.visitorId, body.site, now, now).changes > 0) {
+    newVisitorRate.hit(bucket);
+    visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
+  }
   const traits: Record<string, unknown> = visitor ? JSON.parse(visitor.traits) : {};
 
   // Plan enforcement: fail soft — tracking continues, personalization stops.
   const { plan, def } = sitePlan(body.site);
   const usage = usageFor(body.site);
   if (!def.personalize || usage.overLimit) {
-    return c.json({ decisions: [], traits, shadow: true, plan, usage });
+    return c.json(canRead ? { decisions: [], traits, shadow: true, plan, usage } : { decisions: [], traits });
   }
 
   const variants = db
@@ -206,7 +235,7 @@ app.post("/api/decide", async (c) => {
     decisions.push({ selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops) });
   }
 
-  return c.json({ decisions, traits, plan, usage });
+  return c.json(canRead ? { decisions, traits, plan, usage } : { decisions, traits });
 });
 
 // ---------- events ----------
@@ -411,6 +440,15 @@ app.delete("/api/visitors/:id", (c) => {
 });
 
 // ---------- auth (Google OAuth for humans; Bearer tokens unchanged for agents) ----------
+// Auth cookies are Secure everywhere except plain-http loopback (local dev and the
+// e2e server), where browsers would drop a Secure cookie set over http.
+function secureCookies(c: { req: { url: string; header: (n: string) => string | undefined } }) {
+  if (c.req.header("x-forwarded-proto") === "https") return true;
+  const u = new URL(c.req.url);
+  return u.protocol === "https:" || !["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+}
+const cookieOpts = (c: Parameters<typeof secureCookies>[0], maxAge: number) =>
+  ({ httpOnly: true, secure: secureCookies(c), sameSite: "Lax", maxAge, path: "/" }) as const;
 const redirectUri = (url: string) => (process.env.BASE_URL ?? new URL(url).origin) + "/auth/callback";
 
 app.get("/auth/login", (c) => c.html(loginPage(c.req.query("error"))));
@@ -419,14 +457,14 @@ app.get("/auth/google", (c) => {
   if (!oauthEnabled) return c.redirect("/auth/login");
   const state = crypto.randomUUID();
   const nonce = crypto.randomUUID();
-  setCookie(c, "prism_oauth_state", state + ":" + nonce, { httpOnly: true, sameSite: "Lax", maxAge: 600, path: "/" });
+  setCookie(c, "prism_oauth_state", state + ":" + nonce, cookieOpts(c, 600));
   return c.redirect(googleAuthUrl(redirectUri(c.req.url), state, nonce));
 });
 
 app.get("/auth/callback", async (c) => {
   if (!oauthEnabled) return c.redirect("/auth/login");
   const [state, nonce] = (getCookie(c)["prism_oauth_state"] ?? "").split(":");
-  deleteCookie(c, "prism_oauth_state", { path: "/" });
+  deleteCookie(c, "prism_oauth_state", { path: "/", secure: secureCookies(c) });
   if (!state || !nonce || c.req.query("state") !== state) return c.html(loginPage("Sign-in state mismatch — try again."), 400);
   const code = c.req.query("code");
   if (!code) return c.html(loginPage("Google did not return an authorization code."), 400);
@@ -435,19 +473,19 @@ app.get("/auth/callback", async (c) => {
   const id = await verifyGoogleIdToken(idToken, process.env.GOOGLE_CLIENT_ID!, nonce);
   if (!id) return c.html(loginPage("Could not verify your Google identity."), 401);
   if (!accountRole(id.email)) return c.html(loginPage(`${id.email} is not on the allowlist for this deployment.`), 403);
-  setCookie(c, SESSION_COOKIE, await makeSession(id.email), { httpOnly: true, sameSite: "Lax", maxAge: 7 * 86400, path: "/" });
+  setCookie(c, SESSION_COOKIE, await makeSession(id.email), cookieOpts(c, 7 * 86400));
   return c.redirect("/admin");
 });
 
 // Local development bypass — only exists when DEV_AUTH_EMAIL is set (never set it in prod).
 app.get("/auth/dev-login", async (c) => {
   if (!DEV_EMAIL) return c.text("Not found", 404);
-  setCookie(c, SESSION_COOKIE, await makeSession(DEV_EMAIL), { httpOnly: true, sameSite: "Lax", maxAge: 7 * 86400, path: "/" });
+  setCookie(c, SESSION_COOKIE, await makeSession(DEV_EMAIL), cookieOpts(c, 7 * 86400));
   return c.redirect("/admin");
 });
 
 app.get("/auth/logout", (c) => {
-  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: secureCookies(c) });
   return c.redirect("/auth/login");
 });
 

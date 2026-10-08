@@ -21,6 +21,7 @@
   },
   "scripts": {
     "start": "bun run src/server.ts",
+    "test:unit": "bun test tests/unit",
     "test:e2e": "e2e run --exclude-tag bugbash",
     "test:e2e:bugbash": "e2e run --tag bugbash"
   }

@@ -67,6 +67,23 @@ describe('regression: API', { tags: ['regression'] }, () => {
     expect(bad.body.recorded ?? 0).toBe(0);
   });
 
+  test('PRISM-030 unauthenticated decide hides plan/usage and never meters an unknown site', async ({ app }) => {
+    const site = `e2e-unknown-${Date.now()}`;
+    const r = await api(app.baseUrl, '/api/decide', { method: 'POST', json: { visitorId: uid('v_unk'), site } });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ decisions: [], traits: {} });
+    const exp = await api(app.baseUrl, `/api/export?site=${site}`, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+    expect(exp.body.visitors).toEqual([]);
+    const demo = await api(app.baseUrl, '/api/decide', { method: 'POST', json: { visitorId: uid('v_demo'), site: 'demo' } });
+    expect(demo.status).toBe(200);
+    expect(Array.isArray(demo.body.decisions)).toBe(true);
+    expect(demo.body.plan).toBeUndefined();
+    expect(demo.body.usage).toBeUndefined();
+    const authed = await api(app.baseUrl, '/api/decide', { method: 'POST', headers: { authorization: `Bearer ${ADMIN_TOKEN}` }, json: { visitorId: uid('v_adm'), site: 'demo' } });
+    expect(authed.body.plan).toBeDefined();
+    expect(authed.body.usage).toBeDefined();
+  });
+
   test('PRISM-012 the SRI hash published on the landing page matches the served snippet', async ({ app }) => {
     const html = await (await fetch(new URL('/', app.baseUrl))).text();
     const published = html.match(/integrity="(sha384-[^"]+)"/)?.[1];
