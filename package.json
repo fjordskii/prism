@@ -5,6 +5,8 @@
   "private": true,
   "devDependencies": {
     "@ai-sdk/anthropic": "^4.0.74",
+    "@ai-sdk/openai": "^4",
+    "@ai-sdk/openai-compatible": "^3",
     "@e2e-dev/web": "^0.13.0",
     "@types/bun": "latest",
     "ai": "^7.0.130",
@@ -16,5 +18,10 @@
   },
   "dependencies": {
     "hono": "^4.13.13"
+  },
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "test:e2e": "e2e run --exclude-tag bugbash",
+    "test:e2e:bugbash": "e2e run --tag bugbash"
   }
 }

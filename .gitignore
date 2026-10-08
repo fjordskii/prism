@@ -36,4 +36,7 @@ video/node_modules
 video/out
 node_modules
 prism.db*
+
+# e2e output
+.e2e/
 .e2e-audit/

@@ -200,7 +200,9 @@ let site = new URLSearchParams(location.search).get('site') || 'demo';
 const qs = new URLSearchParams(location.search);
 const token = qs.get('token');
 async function loadSites() {
-  const sites = await fetch('/api/sites').then(r => r.json());
+  const res = await authFetch('/api/sites');
+  if (!res.ok) return;
+  const sites = await res.json();
   const picker = document.getElementById('sitePicker');
   picker.innerHTML = '';
   if (!sites.includes(site)) sites.push(site);
@@ -389,6 +391,13 @@ document.getElementById('mode-visual').addEventListener('click', () => syncFromH
 htmlEl.addEventListener('input', () => { previewEl.innerHTML = htmlEl.value; });
 function fmtCI(ci) { return ci ? (100*ci[0]).toFixed(1) + '–' + (100*ci[1]).toFixed(1) + '%' : ''; }
 const OPSYM = { eq: '=', neq: '≠', gt: '>', lt: '<', gte: '≥', lte: '≤', contains: 'contains' };
+// datetime-local wants local wall time; toISOString() is UTC and shifts by the zone offset.
+function toLocalInput(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
 function humanize(audience) {
   try {
     const rules = JSON.parse(audience);
@@ -409,17 +418,19 @@ function editVariant(v) {
   try { const ops = JSON.parse(v.ops); html = (ops.find(o => o.op === 'html') || {}).html || ''; } catch {}
   document.getElementById('b-html').value = html;
   syncFromHTML();
-  document.getElementById('b-starts').value = v.starts_at ? new Date(v.starts_at).toISOString().slice(0,16) : '';
-  document.getElementById('b-ends').value = v.ends_at ? new Date(v.ends_at).toISOString().slice(0,16) : '';
+  document.getElementById('b-starts').value = toLocalInput(v.starts_at);
+  document.getElementById('b-ends').value = toLocalInput(v.ends_at);
   document.getElementById('b-msg').textContent = 'Editing "' + v.name + '". Create saves as a new variant; pause the old one.';
   document.getElementById('builder').scrollIntoView({ behavior: 'smooth' });
 }
 
 async function load() {
-  const [variants, stats] = await Promise.all([
-    fetch('/api/variants?site=' + site).then(r => r.json()),
-    fetch('/api/stats?site=' + site).then(r => r.json()),
+  const [vRes, sRes] = await Promise.all([
+    authFetch('/api/variants?site=' + encodeURIComponent(site)),
+    authFetch('/api/stats?site=' + encodeURIComponent(site)),
   ]);
+  if (!vRes.ok || !sRes.ok) return;
+  const [variants, stats] = await Promise.all([vRes.json(), sRes.json()]);
   const byId = Object.fromEntries(stats.variants.map(s => [s.id, s]));
   document.getElementById('holdout').textContent = stats.holdoutPct + '% of traffic held out as control';
   const planEl = document.getElementById('planuse'), warnEl = document.getElementById('overlimit');

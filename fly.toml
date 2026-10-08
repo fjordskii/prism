@@ -23,4 +23,5 @@ primary_region = "iad"
     timeout = "5s"
     grace_period = "10s"
     method = "GET"
-    path = "/api/stats?site=demo"
+    # /api/stats is token-gated. Probe the public snippet instead.
+    path = "/snippet.js"

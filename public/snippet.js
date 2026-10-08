@@ -86,7 +86,8 @@
   function flush(sync) {
     if (!pending.length) return;
     var payload = JSON.stringify({ site: site, visitorId: vid, events: pending.splice(0) });
-    if (sync && navigator.sendBeacon) {
+    // sendBeacon can't send x-prism-key, so a write key forces a keepalive fetch.
+    if (sync && navigator.sendBeacon && !writeKey) {
       navigator.sendBeacon(origin + "/api/events", new Blob([payload], { type: "application/json" }));
     } else {
       fetch(origin + "/api/events", { method: "POST", headers: headers(), body: payload, keepalive: true }).catch(function () {});
@@ -99,7 +100,11 @@
   document.addEventListener("click", function (e) {
     var t = e.target.closest("[data-prism-convert]");
     if (t) {
-      track(t.getAttribute("data-prism-variant") ? +t.getAttribute("data-prism-variant") : currentVariantFor(t), t.getAttribute("data-prism-convert") || guessSelector(t), "conversion");
+      // credit the variant on the named element (the CTA may sit outside it)
+      var sel = t.getAttribute("data-prism-convert") || guessSelector(t);
+      var target = null;
+      try { target = document.querySelector(sel); } catch (err) {}
+      track(t.getAttribute("data-prism-variant") ? +t.getAttribute("data-prism-variant") : currentVariantFor(target || t), sel, "conversion");
       flush(false);
     }
   }, true);
@@ -155,11 +160,14 @@
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  function decide() {
-    var cached = readCache();
+  // fresh: skip the cache and apply the server's answer. A truthy timestamp from
+  // requestAnimationFrame must not count, so callers pass true explicitly.
+  function decide(fresh) {
+    var cached = fresh ? null : readCache();
     if (cached && Date.now() - cached.ts < 300000) applyDecisions(cached.decisions);
+    else cached = null;
 
-    fetch(origin + "/api/decide", {
+    return fetch(origin + "/api/decide", {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ visitorId: vid, site: site }),
@@ -174,9 +182,9 @@
 
   function decideAfterPaint() {
     if (document.readyState === "complete" || document.readyState === "interactive") {
-      requestAnimationFrame(decide);
+      requestAnimationFrame(function () { decide(); });
     } else {
-      document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(decide); });
+      document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(function () { decide(); }); });
     }
   }
   decideAfterPaint();
@@ -202,24 +210,23 @@
   addEventListener("popstate", onNav);
 
   // Public API: prism.identify({orders: 2, affinity: 'woody'}) — host site enriches the profile.
-  // Traits change who this visitor is, so drop the cached decision and re-decide now.
+  // Re-decide only after the server has the traits; resolves once the new decision is applied.
   window.prism = {
     identify: function (traits) {
-      // Traits are known client-side now; re-decide immediately instead of
-      // waiting on the identify round-trip.
       try { localStorage.removeItem(cacheKey); } catch (e) {}
-      decide();
       return fetch(origin + "/api/identify", {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({ visitorId: vid, site: site, traits: traits }),
+      }).then(function (r) {
+        return decide(true).then(function () { return r; });
       });
     },
     convert: function (selector) {
       track(currentVariantFor(document.querySelector(selector) || document.body), selector, "conversion");
       flush(false);
     },
-    redecide: decide,
+    redecide: function () { return decide(true); },
     visitorId: vid,
   };
 })();
