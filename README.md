@@ -34,6 +34,23 @@ Environment:
 | `ADMIN_TOKEN` | unset (open) | Bearer token for variant writes, /admin, /api/export |
 | `SITE_WRITE_KEY` | unset (open) | if set, snippet must send `data-key` to post traits/events |
 | `HOLDOUT_PCT` | `10` | % of eligible visitors held out as control per selector |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset (OAuth off) | Google OAuth client; enables `/auth/login` for browser access |
+| `GOOGLE_ALLOWED_EMAILS` | unset | comma list, `email` or `email:owner|viewer` (default `editor`); seeds the `accounts` table |
+| `SESSION_SECRET` | `ADMIN_TOKEN` | signs session cookies; rotate to revoke all sessions |
+| `BASE_URL` | request origin | external origin for the OAuth redirect URI (set behind a proxy) |
+| `DEV_AUTH_EMAIL` | unset | local dev only: `/auth/dev-login` signs in as this email, no Google round-trip. NEVER set in production |
+| `PRISM_PLAN` | `selfhost` | plan assigned to newly-registered sites (`selfhost` = unlimited) |
+| `READONLY_TOKENS` | unset | comma-separated tokens with read-only access (GET routes, /admin, /api/export); mutations rejected |
+
+## Auth model
+
+- **Humans** (dashboard, architecture page, exports): Google sign-in when
+  `GOOGLE_CLIENT_ID`/`SECRET` are set — `/auth/login` → session cookie. Roles come
+  from the `accounts` table: `owner` (everything incl. plan changes), `editor`
+  (variant CRUD, exports), `viewer` (read-only — the Agency tier's "read-only seat").
+- **Agents and scripts**: unchanged — `Authorization: Bearer $ADMIN_TOKEN`,
+  `READONLY_TOKENS`, `DEMO_TOKEN`, and `?token=` all keep working.
+- Unset everything auth-related and the deployment is open (local-dev default).
 
 Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts`
 
@@ -50,6 +67,16 @@ prism.convert("#hero");                          // manual conversion
 
 Elements with `data-prism-convert="#selector"` auto-track conversions on click.
 
+## Authoring variants
+
+The dashboard's variant builder defaults to a visual block editor — add
+Eyebrow/Heading/Text/Button/Banner/Image blocks from the palette, drag to
+reorder (or use ↑↓), and watch the live preview; no HTML required. The
+**HTML** toggle is the escape hatch: markup the block editor can't round-trip
+(nested divs, lists, scripts) opens there untouched instead of being mangled.
+Button blocks carry an optional conversion-selector field that emits
+`data-prism-convert` for auto-tracked clicks.
+
 ## API
 
 | Route | Method | Auth | Purpose |
@@ -61,7 +88,36 @@ Elements with `data-prism-convert="#selector"` auto-track conversions on click.
 | `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token | pause / remove |
 | `/api/stats?site=` | GET | — | per-variant rates, 95% Wilson CIs, holdout control |
 | `/api/export?site=` | GET | token | full tenant dump (variants, events, visitors) |
-| `/api/visitors/:id?site=` | GET/DELETE | — | GDPR/CCPA export & erasure |
+| `/api/visitors/:id?site=` | GET/DELETE | token | GDPR/CCPA export & erasure |
+| `/api/sites/:site/plan` | POST | token | set a site's plan (`{plan: "growth"}`) |
+
+## Plans and limits
+
+Hosted plans are enforced server-side; the plan registry lives in `src/plans.ts`.
+Newly-registered sites get the plan named by `PRISM_PLAN` (default `selfhost`).
+
+| Plan | Visitors/mo | Sites | Personalization |
+|---|---|---|---|
+| `shadow` | 10,000 | 1 | no — tracking only |
+| `growth` | 100,000 | 3 | yes |
+| `pro` | 500,000 | 5 | yes |
+| `agency` | 1,000,000 | unlimited | yes |
+| `selfhost` | unlimited | unlimited | yes |
+
+`selfhost` is the default precisely because self-hosting is never capped.
+
+Overage and shadow both fail soft — tracking continues, nothing auto-bills:
+when a site is over its visitor cap or on `shadow`, `POST /api/decide` still
+returns 200, but with `decisions: []` and `shadow: true` (plus the site's
+`plan` and `usage`). `GET /api/stats?site=` exposes `plan`,
+`usage: { visitors, visitorCap, overLimit }`, and `segments` (trait field →
+value → visitor count). Registering a never-seen site via `POST /api/variants`
+returns `402 { error: "site_cap", cap }` once the deployment's site cap is full.
+
+Change a site's plan with `POST /api/sites/:site/plan` body
+`{"plan": "growth"}` (admin token; 400 on unknown plan). Issue read-only seats
+via the `READONLY_TOKENS` env var: those tokens reach GET routes, `/admin`,
+`/api/export`, and `GET /api/visitors/:id`, but every mutation is rejected.
 
 ## Design invariants
 

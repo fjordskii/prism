@@ -2,6 +2,10 @@
 import { db } from "./db";
 
 const site = "demo";
+// The public demo must keep personalizing under plan enforcement.
+db.prepare(
+  "INSERT INTO sites (site, plan, created_at) VALUES (?, 'agency', ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan"
+).run(site, Date.now());
 const existing = db.prepare("SELECT COUNT(*) AS n FROM variants WHERE site = ?").get(site) as { n: number };
 if (existing.n > 0) {
   console.log(`Site "${site}" already has ${existing.n} variants — skipping seed`);

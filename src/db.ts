@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_variant ON events(variant_id, type);
 CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id);
+
+CREATE TABLE IF NOT EXISTS sites (
+  site TEXT PRIMARY KEY,
+  plan TEXT NOT NULL,                   -- key into PLANS (src/plans.ts)
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email TEXT PRIMARY KEY,               -- Google identity, lowercased
+  role TEXT NOT NULL DEFAULT 'editor',  -- owner | editor | viewer (viewer = read-only seat)
+  created_at INTEGER NOT NULL
+);
 `);
 
 export type Variant = {

@@ -4,7 +4,12 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@ai-sdk/anthropic": "^4.0.74",
+    "@e2e-dev/web": "^0.13.0",
+    "@types/bun": "latest",
+    "ai": "^7.0.130",
+    "e2e": "^0.18.0",
+    "playwright": "^1.63.0"
   },
   "peerDependencies": {
     "typescript": "^7"

@@ -5,6 +5,17 @@ import { serveStatic } from "hono/bun";
 import { db, matchAudience, type Variant, type Rule } from "./db";
 import { banditScore } from "./bandit";
 import { dashboard } from "./dashboard";
+import { architecture } from "./architecture";
+import { PLANS, sitePlan, usageFor, registerSite } from "./plans";
+import {
+  oauthEnabled, DEV_EMAIL, SESSION_COOKIE, loginPage,
+  accountRole, sessionEmail, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
+} from "./auth";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+
+// Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
+const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
+console.log("snippet.v1.js SRI: sha384-" + snippetSri);
 
 const app = new Hono<{ Variables: { demoBody?: Record<string, unknown> } }>();
 app.use("/api/*", cors());
@@ -13,16 +24,37 @@ app.use("/api/*", cors());
 // Public (no auth): /api/identify, /api/decide, /api/events — the snippet's runtime surface.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const DEMO_TOKEN = process.env.DEMO_TOKEN; // read-only demo access for prospects
-function authorized(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }, allowDemo = false) {
-  if (!ADMIN_TOKEN) return true;
+// Read-only tokens: GET routes, /admin, /api/export, GET /api/visitors/:id — never mutations.
+const READONLY_TOKENS: Record<string, true> = Object.fromEntries(
+  (process.env.READONLY_TOKENS ?? "").split(",").filter(Boolean).map((t) => [t, true])
+);
+// Session cookie (Google OAuth) takes precedence for browsers; Bearer/query tokens
+// remain the agent/operator path. Open mode only when NO auth is configured at all.
+async function authorized(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }, allowDemo = false, allowReadonly = false) {
+  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
+  if (email) {
+    const role = accountRole(email);
+    if (role === "owner" || role === "editor") return true;
+    if (role === "viewer") return allowReadonly;
+  }
+  if (!ADMIN_TOKEN && !oauthEnabled) return true;
   const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
-  if (tok === ADMIN_TOKEN) return true;
+  if (tok === ADMIN_TOKEN && ADMIN_TOKEN) return true;
   if (allowDemo && DEMO_TOKEN && tok === DEMO_TOKEN) return true;
+  if (allowReadonly && tok !== undefined && Object.hasOwn(READONLY_TOKENS, tok)) return true;
   return false;
+}
+// Plan changes are billing-adjacent: admin token or an owner session, never editor/viewer/demo.
+async function fullAdmin(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }) {
+  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
+  if (email && accountRole(email) === "owner") return true;
+  if (!ADMIN_TOKEN && !oauthEnabled) return true;
+  const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+  return Boolean(ADMIN_TOKEN) && tok === ADMIN_TOKEN;
 }
 app.use("/api/variants*", async (c, next) => {
   if (c.req.method === "GET") return next();
-  if (authorized(c)) return next();
+  if (await authorized(c)) return next();
   // Demo token may write ONLY to the demo site — prospects must be able to
   // complete the authoring loop during evaluation.
   if (DEMO_TOKEN) {
@@ -44,8 +76,9 @@ app.use("/api/variants*", async (c, next) => {
   return c.json({ error: "unauthorized" }, 401);
 });
 app.use("/admin", async (c, next) => {
-  if (!authorized(c, true)) return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
-  return next();
+  if (await authorized(c, true, true)) return next();
+  if (oauthEnabled) return c.redirect("/auth/login");
+  return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
 });
 
 // Optional anti-poisoning write key: if SITE_WRITE_KEY is set, snippet calls must carry it.
@@ -64,7 +97,8 @@ const getVisitor = db.prepare("SELECT * FROM visitors WHERE id = ? AND site = ?"
 const insVisitor = db.prepare(
   `INSERT INTO visitors (id, site, first_seen, last_seen, visits, traits)
    VALUES (?, ?, ?, ?, 1, ?)
-   ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen, visits = visits + 1`
+   ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen, visits = visits + 1
+   WHERE visitors.site = excluded.site`
 );
 const updTraits = db.prepare("UPDATE visitors SET traits = ? WHERE id = ? AND site = ?");
 
@@ -84,13 +118,27 @@ app.post("/api/identify", async (c) => {
 // tracked with variant_id=null so /api/stats can report true incremental lift.
 const HOLDOUT_PCT = Number(process.env.HOLDOUT_PCT ?? 10);
 
+// Metering: decide counts visitors even before first identify, so usage is honest.
+const insMeter = db.prepare("INSERT OR IGNORE INTO visitors (id, site, first_seen, last_seen, traits) VALUES (?,?,?,?,'{}')");
+const touchMeter = db.prepare("UPDATE visitors SET last_seen = ? WHERE id = ? AND site = ?");
+
 app.post("/api/decide", async (c) => {
   const body = await c.req.json<{ visitorId: string; site: string; selectors?: string[] }>();
   if (!body.visitorId || !body.site) return c.json({ error: "visitorId and site required" }, 400);
 
+  const now = Date.now();
+  insMeter.run(body.visitorId, body.site, now, now);
+  touchMeter.run(now, body.visitorId, body.site);
+
   const visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
   const traits: Record<string, unknown> = visitor ? JSON.parse(visitor.traits) : {};
-  const now = Date.now();
+
+  // Plan enforcement: fail soft — tracking continues, personalization stops.
+  const { plan, def } = sitePlan(body.site);
+  const usage = usageFor(body.site);
+  if (!def.personalize || usage.overLimit) {
+    return c.json({ decisions: [], traits, shadow: true, plan, usage });
+  }
 
   const variants = db
     .prepare(
@@ -128,7 +176,7 @@ app.post("/api/decide", async (c) => {
     decisions.push({ selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops) });
   }
 
-  return c.json({ decisions, traits });
+  return c.json({ decisions, traits, plan, usage });
 });
 
 // ---------- events ----------
@@ -152,7 +200,7 @@ app.post("/api/events", async (c) => {
   let recorded = 0;
   const tx = db.transaction(() => {
     for (const e of body.events) {
-      if (e.type === "conversion" && e.variantId != null) {
+      if (e.type === "conversion") {
         if (!hasImp.get(body.site, body.visitorId, e.selector, e.variantId, e.variantId)) continue;
       }
       stmt.run(body.site, body.visitorId, e.variantId, e.selector, e.type, now);
@@ -177,6 +225,8 @@ app.post("/api/variants", async (c) => {
   // Body may already be parsed by the demo-token middleware (JSON bodies are single-read).
   const b = (c.get("demoBody") ?? await c.req.json().catch(() => ({}))) as Partial<Variant> & { site: string; name: string; selector: string };
   if (!b.site || !b.name || !b.selector) return c.json({ error: "site, name, selector required" }, 400);
+  const reg = registerSite(b.site);
+  if (!reg.ok) return c.json({ error: "site_cap", cap: reg.cap }, 402);
   const r = db
     .prepare(
       `INSERT INTO variants (site, name, selector, ops, audience, weight, starts_at, ends_at, active, created_at)
@@ -197,6 +247,18 @@ app.post("/api/variants/:id/toggle", (c) => {
 app.delete("/api/variants/:id", (c) => {
   db.prepare("DELETE FROM variants WHERE id = ?").run(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+// Plan management: admin token only (no demo, no readonly).
+const upsertPlan = db.prepare(
+  "INSERT INTO sites (site, plan, created_at) VALUES (?, ?, ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan"
+);
+app.post("/api/sites/:site/plan", async (c) => {
+  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json<{ plan?: string }>().catch(() => null);
+  if (!body?.plan || !Object.hasOwn(PLANS, body.plan)) return c.json({ error: "unknown plan" }, 400);
+  upsertPlan.run(c.req.param("site"), body.plan, Date.now());
+  return c.json({ ok: true, site: c.req.param("site"), plan: body.plan });
 });
 
 // ---------- stats ----------
@@ -235,6 +297,26 @@ app.get("/api/stats", (c) => {
     rate: r.impressions ? r.conversions / r.impressions : null,
     ci95: wilson(r.conversions, r.impressions),
   }));
+
+  // Segments: trait field -> String(value) -> visitor count (top 50 fields).
+  const segments: Record<string, Record<string, number>> = {};
+  const traitRows = db.prepare("SELECT traits FROM visitors WHERE site = ?").all(site) as { traits: string }[];
+  for (const r of traitRows) {
+    let t: unknown;
+    try { t = JSON.parse(r.traits); } catch { continue; }
+    if (!t || typeof t !== "object" || Array.isArray(t)) continue;
+    for (const [k, v] of Object.entries(t)) {
+      if (!Object.hasOwn(segments, k)) {
+        if (Object.keys(segments).length >= 50) continue;
+        segments[k] = {};
+      }
+      const bucket = segments[k]!;
+      const key = String(v);
+      bucket[key] = (bucket[key] ?? 0) + 1;
+    }
+  }
+
+  const { plan } = sitePlan(site);
   return c.json({
     variants: withCI,
     control: {
@@ -243,12 +325,15 @@ app.get("/api/stats", (c) => {
       ci95: wilson(control.conversions, control.impressions),
     },
     holdoutPct: HOLDOUT_PCT,
+    plan,
+    usage: usageFor(site),
+    segments,
   });
 });
 
 // ---------- export / DSR ----------
-app.get("/api/export", (c) => {
-  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
+app.get("/api/export", async (c) => {
+  if (!(await authorized(c, true, true))) return c.json({ error: "unauthorized" }, 401);
   const site = c.req.query("site") ?? "demo";
   return c.json({
     site,
@@ -262,7 +347,9 @@ app.get("/api/export", (c) => {
 // GDPR/CCPA: export or erase one visitor across visitors+events. Token-gated —
 // these read/destroy PII-adjacent data, so they use the same auth as /admin.
 app.use("/api/visitors/*", async (c, next) => {
-  if (!authorized(c, true)) return c.json({ error: "unauthorized" }, 401);
+  // Readonly tokens may read a visitor but never erase one.
+  const ok = c.req.method === "GET" ? await authorized(c, true, true) : await authorized(c, true);
+  if (!ok) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 app.get("/api/visitors/:id", (c) => {
@@ -280,6 +367,47 @@ app.delete("/api/visitors/:id", (c) => {
     db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
   });
   return c.json({ ok: true, deleted: id });
+});
+
+// ---------- auth (Google OAuth for humans; Bearer tokens unchanged for agents) ----------
+const redirectUri = (url: string) => (process.env.BASE_URL ?? new URL(url).origin) + "/auth/callback";
+
+app.get("/auth/login", (c) => c.html(loginPage(c.req.query("error"))));
+
+app.get("/auth/google", (c) => {
+  if (!oauthEnabled) return c.redirect("/auth/login");
+  const state = crypto.randomUUID();
+  const nonce = crypto.randomUUID();
+  setCookie(c, "prism_oauth_state", state + ":" + nonce, { httpOnly: true, sameSite: "Lax", maxAge: 600, path: "/" });
+  return c.redirect(googleAuthUrl(redirectUri(c.req.url), state, nonce));
+});
+
+app.get("/auth/callback", async (c) => {
+  if (!oauthEnabled) return c.redirect("/auth/login");
+  const [state, nonce] = (getCookie(c)["prism_oauth_state"] ?? "").split(":");
+  deleteCookie(c, "prism_oauth_state", { path: "/" });
+  if (!state || !nonce || c.req.query("state") !== state) return c.html(loginPage("Sign-in state mismatch — try again."), 400);
+  const code = c.req.query("code");
+  if (!code) return c.html(loginPage("Google did not return an authorization code."), 400);
+  const idToken = await exchangeCode(code, redirectUri(c.req.url));
+  if (!idToken) return c.html(loginPage("Token exchange with Google failed."), 502);
+  const id = await verifyGoogleIdToken(idToken, process.env.GOOGLE_CLIENT_ID!, nonce);
+  if (!id) return c.html(loginPage("Could not verify your Google identity."), 401);
+  if (!accountRole(id.email)) return c.html(loginPage(`${id.email} is not on the allowlist for this deployment.`), 403);
+  setCookie(c, SESSION_COOKIE, await makeSession(id.email), { httpOnly: true, sameSite: "Lax", maxAge: 7 * 86400, path: "/" });
+  return c.redirect("/admin");
+});
+
+// Local development bypass — only exists when DEV_AUTH_EMAIL is set (never set it in prod).
+app.get("/auth/dev-login", async (c) => {
+  if (!DEV_EMAIL) return c.text("Not found", 404);
+  setCookie(c, SESSION_COOKIE, await makeSession(DEV_EMAIL), { httpOnly: true, sameSite: "Lax", maxAge: 7 * 86400, path: "/" });
+  return c.redirect("/admin");
+});
+
+app.get("/auth/logout", (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.redirect("/auth/login");
 });
 
 // ---------- trust pages ----------
@@ -344,6 +472,12 @@ app.use("/snippet.v1.js", async (c, next) => {
 });
 app.use("/snippet.v1.js", serveStatic({ path: "./public/snippet.js" }));
 app.get("/admin", (c) => c.html(dashboard()));
+// Internal architecture docs — same access rules as /admin (admin, demo, readonly).
+app.get("/architecture", async (c) => {
+  if (!(await authorized(c, true, true)))
+    return oauthEnabled ? c.redirect("/auth/login") : c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
+  return c.html(architecture());
+});
 // Snippet: long cache + immutable-ish; it only changes on deploy, and cache-bust via ?v= if needed.
 app.use("/snippet.js", async (c, next) => {
   await next();
