@@ -26,8 +26,8 @@ per visitor: pre-approved content variants, rule-based audiences, a Bayesian ban
 
 ## Round-3 changes (verify live, don't trust this list)
 
-- Demo token is now write-capable on the demo site ONLY: POST /api/variants with
-  `authorization: Bearer demo-panel-2026` and site:"demo" works; other sites 401.
+- Demo token is write-capable on the demo site ONLY: POST /api/variants with
+  `authorization: Bearer` plus the demo token (ask operator) and site:"demo" works; other sites 401.
   Toggle/delete allowed for demo-site variants. Complete the authoring loop yourself.
 - Admin dashboard: Edit button on every variant (reopens builder pre-filled),
   audience rules humanized in the table ("cartItems ≥ 3" not raw JSON).
@@ -35,9 +35,9 @@ per visitor: pre-approved content variants, rule-based audiences, a Bayesian ban
   the old copy (tagged data-prism-owned), never duplicates. Verified against a
   simulated React hydration clobber.
 - DSR endpoints are now token-gated (same auth as /admin): GET/DELETE
-  /api/visitors/:id?site=…&token=demo-panel-2026
+  /api/visitors/:id?site=…&token= plus the demo token (ask operator)
 - Supply chain: immutable versioned snippet at /snippet.v1.js (max-age=1y,
-immutable) with published SRI hash sha384-g8aa4Fhxe/l9XqedTYl+17fbXzXZ5YoQFCE93vdQhe9CIXaPRoXBoBJEmRV1+rlB;
+immutable) with published SRI hash sha384-9tLikfoPMrm+wraop3h7uEydLqAyL6Hw2OPM7kwPnzJw78DA2JlYTg3AJqp1eMzH;
   or self-host the snippet from your own domain with data-host + data-cookie
   overrides (white-label: custom API origin + custom cookie name).
 - Source-available: github.com/fjordskii/prism (BSL 1.1 → Apache 2.0 in 2030);
@@ -53,7 +53,7 @@ immutable) with published SRI hash sha384-g8aa4Fhxe/l9XqedTYl+17fbXzXZ5YoQFCE93v
 
 1. Landing page: https://prism-personalize.fly.dev/landing/  (positioning, pricing, FAQ, integrations)
 2. Live demo storefront: https://prism-personalize.fly.dev/  (persona simulator bottom-right)
-3. Admin dashboard: https://prism-personalize.fly.dev/admin?token=demo-panel-2026
+3. Admin dashboard: https://prism-personalize.fly.dev/admin?token= plus the demo token (ask operator)
 4. Demo video: https://prism-personalize.fly.dev/landing/prism-demo.mp4 (32 s)
 5. API surface: POST /api/identify, POST /api/decide, POST /api/events,
    GET/POST /api/variants, GET /api/stats — all on the same host. You may curl them.

@@ -1,6 +1,7 @@
 // Prism server: decision API, event ingest, admin dashboard, static demo + snippet.
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { serveStatic } from "hono/bun";
 import { db, matchAudience, type Variant, type Rule } from "./db";
 import { banditScore } from "./bandit";
@@ -19,18 +20,36 @@ console.log("snippet.v1.js SRI: sha384-" + snippetSri);
 
 const app = new Hono<{ Variables: { demoBody?: Record<string, unknown> } }>();
 app.use("/api/*", cors());
+// Malformed JSON bodies are a client error, not a 500.
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  if (err instanceof SyntaxError) return c.json({ error: "invalid JSON body" }, 400);
+  console.error(err);
+  return c.json({ error: "internal error" }, 500);
+});
 
-// Admin auth: Bearer token on mutating/admin routes. Set ADMIN_TOKEN in env.
-// Public (no auth): /api/identify, /api/decide, /api/events — the snippet's runtime surface.
+// Admin auth: Bearer token or session on mutating routes, the dashboard, and catalog reads.
+// Public (no auth): /api/identify, /api/decide, /api/events, and the snippet files.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-const DEMO_TOKEN = process.env.DEMO_TOKEN; // read-only demo access for prospects
+// TODO: rotate by setting the Fly secret DEMO_TOKEN to a new value
+// (`fly secrets set DEMO_TOKEN=...`). This historical literal is the default
+// only when that env var is unset; once the secret is set, the literal is ignored.
+const DEMO_TOKEN = process.env.DEMO_TOKEN || "demo-panel-2026";
 // Read-only tokens: GET routes, /admin, /api/export, GET /api/visitors/:id — never mutations.
 const READONLY_TOKENS: Record<string, true> = Object.fromEntries(
   (process.env.READONLY_TOKENS ?? "").split(",").filter(Boolean).map((t) => [t, true])
 );
+type AuthReq = { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } };
+function requestToken(c: AuthReq) {
+  return c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+}
+function demoTokenMatches(c: AuthReq) {
+  const tok = requestToken(c);
+  return Boolean(DEMO_TOKEN) && tok === DEMO_TOKEN;
+}
 // Session cookie (Google OAuth) takes precedence for browsers; Bearer/query tokens
 // remain the agent/operator path. Open mode only when NO auth is configured at all.
-async function authorized(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }, allowDemo = false, allowReadonly = false) {
+async function authorized(c: AuthReq, allowDemo = false, allowReadonly = false) {
   const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
   if (email) {
     const role = accountRole(email);
@@ -38,39 +57,50 @@ async function authorized(c: { req: { header: (n: string) => string | undefined;
     if (role === "viewer") return allowReadonly;
   }
   if (!ADMIN_TOKEN && !oauthEnabled) return true;
-  const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+  const tok = requestToken(c);
   if (tok === ADMIN_TOKEN && ADMIN_TOKEN) return true;
   if (allowDemo && DEMO_TOKEN && tok === DEMO_TOKEN) return true;
   if (allowReadonly && tok !== undefined && Object.hasOwn(READONLY_TOKENS, tok)) return true;
   return false;
 }
+// Admin token or an owner/editor session: any site. Demo token: the demo site
+// only (it is handed to prospects, so it must never read or erase another tenant).
+// Readonly tokens and viewer sessions: reads on any site of this deployment.
+// Google accounts stay deployment-wide; the demo token is the site-scoped credential.
+async function authorizedForSite(c: AuthReq, site: string, opts?: { write?: boolean }) {
+  if (await authorized(c)) return true;
+  if (site === "demo" && demoTokenMatches(c)) return true;
+  if (!opts?.write && (await authorized(c, false, true))) return true;
+  return false;
+}
 // Plan changes are billing-adjacent: admin token or an owner session, never editor/viewer/demo.
-async function fullAdmin(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }) {
+async function fullAdmin(c: AuthReq) {
   const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
   if (email && accountRole(email) === "owner") return true;
   if (!ADMIN_TOKEN && !oauthEnabled) return true;
-  const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
+  const tok = requestToken(c);
   return Boolean(ADMIN_TOKEN) && tok === ADMIN_TOKEN;
 }
 app.use("/api/variants*", async (c, next) => {
-  if (c.req.method === "GET") return next();
+  if (c.req.method === "GET") {
+    const site = c.req.query("site") ?? "demo";
+    if (await authorizedForSite(c, site)) return next();
+    return c.json({ error: "unauthorized" }, 401);
+  }
   if (await authorized(c)) return next();
   // Demo token may write ONLY to the demo site — prospects must be able to
   // complete the authoring loop during evaluation.
-  if (DEMO_TOKEN) {
-    const tok = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
-    if (tok === DEMO_TOKEN) {
-      if (c.req.method === "POST" && c.req.path === "/api/variants") {
-        const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-        if (body?.site === "demo") { c.set("demoBody", body); return next(); }
-      }
-      // toggle/delete allowed only for demo-site variants. Middleware runs before
-      // route matching, so extract the id from the path directly.
-      const m = c.req.path.match(/^\/api\/variants\/(\d+)/);
-      if (m) {
-        const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(Number(m[1])) as { site: string } | null;
-        if (v?.site === "demo") return next();
-      }
+  if (demoTokenMatches(c)) {
+    if (c.req.method === "POST" && c.req.path === "/api/variants") {
+      const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+      if (body?.site === "demo") { c.set("demoBody", body); return next(); }
+    }
+    // toggle/delete allowed only for demo-site variants. Middleware runs before
+    // route matching, so extract the id from the path directly.
+    const m = c.req.path.match(/^\/api\/variants\/(\d+)/);
+    if (m) {
+      const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(Number(m[1])) as { site: string } | null;
+      if (v?.site === "demo") return next();
     }
   }
   return c.json({ error: "unauthorized" }, 401);
@@ -181,7 +211,8 @@ app.post("/api/decide", async (c) => {
 
 // ---------- events ----------
 // Integrity: a conversion is only recorded if this visitor has an impression for the
-// same variant+selector — kills orphaned conversions and most casual poisoning.
+// same variant+selector (or a control impression for control conversions). Unknown
+// event types are dropped. Malformed JSON is a 400 via the app error handler.
 app.post("/api/events", async (c) => {
   const body = await c.req.json<{
     site: string;
@@ -200,10 +231,12 @@ app.post("/api/events", async (c) => {
   let recorded = 0;
   const tx = db.transaction(() => {
     for (const e of body.events) {
+      if (!e || (e.type !== "impression" && e.type !== "conversion") || typeof e.selector !== "string") continue;
+      const variantId = e.variantId ?? null;
       if (e.type === "conversion") {
-        if (!hasImp.get(body.site, body.visitorId, e.selector, e.variantId, e.variantId)) continue;
+        if (!hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) continue;
       }
-      stmt.run(body.site, body.visitorId, e.variantId, e.selector, e.type, now);
+      stmt.run(body.site, body.visitorId, variantId, e.selector, e.type, now);
       recorded++;
     }
   });
@@ -211,9 +244,14 @@ app.post("/api/events", async (c) => {
   return c.json({ ok: true, recorded });
 });
 
-app.get("/api/sites", (c) => {
+app.get("/api/sites", async (c) => {
   const rows = db.prepare("SELECT DISTINCT site FROM variants UNION SELECT DISTINCT site FROM events UNION SELECT DISTINCT site FROM visitors").all() as { site: string }[];
-  return c.json(rows.map((r) => r.site));
+  const sites = rows.map((r) => r.site);
+  // Full admin, readonly seat, or viewer session: every site on this deployment.
+  // Demo token: the demo site only. Anyone else: 401.
+  if (await authorized(c, false, true)) return c.json(sites);
+  if (demoTokenMatches(c)) return c.json(sites.filter((s) => s === "demo"));
+  return c.json({ error: "unauthorized" }, 401);
 });
 // ---------- admin CRUD ----------
 app.get("/api/variants", (c) => {
@@ -272,8 +310,9 @@ function wilson(conv: number, imp: number): [number, number] | null {
   return [Math.max(0, center - spread), Math.min(1, center + spread)];
 }
 
-app.get("/api/stats", (c) => {
+app.get("/api/stats", async (c) => {
   const site = c.req.query("site") ?? "demo";
+  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
   const rows = db
     .prepare(
       `SELECT v.id, v.name, v.selector, v.active, v.starts_at, v.ends_at,
@@ -333,8 +372,8 @@ app.get("/api/stats", (c) => {
 
 // ---------- export / DSR ----------
 app.get("/api/export", async (c) => {
-  if (!(await authorized(c, true, true))) return c.json({ error: "unauthorized" }, 401);
   const site = c.req.query("site") ?? "demo";
+  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
   return c.json({
     site,
     exportedAt: new Date().toISOString(),
@@ -347,9 +386,10 @@ app.get("/api/export", async (c) => {
 // GDPR/CCPA: export or erase one visitor across visitors+events. Token-gated —
 // these read/destroy PII-adjacent data, so they use the same auth as /admin.
 app.use("/api/visitors/*", async (c, next) => {
-  // Readonly tokens may read a visitor but never erase one.
-  const ok = c.req.method === "GET" ? await authorized(c, true, true) : await authorized(c, true);
-  if (!ok) return c.json({ error: "unauthorized" }, 401);
+  // Readonly tokens may read a visitor but never erase one. Demo token: demo site only.
+  const site = c.req.query("site") ?? "demo";
+  const write = c.req.method !== "GET" && c.req.method !== "HEAD";
+  if (!(await authorizedForSite(c, site, { write }))) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 app.get("/api/visitors/:id", (c) => {
@@ -366,6 +406,7 @@ app.delete("/api/visitors/:id", (c) => {
     db.prepare("DELETE FROM events WHERE visitor_id = ? AND site = ?").run(id, site);
     db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
   });
+  tx(); // the erasure must actually run
   return c.json({ ok: true, deleted: id });
 });
 
@@ -438,7 +479,7 @@ app.get("/security", (c) =>
       `<h2>Serving model</h2>
 <p>The 9 KB snippet (3 KB gzipped) loads with <code>defer</code>, applies changes after first paint, and wraps every DOM operation in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
 <h2>Access control</h2>
-<p>Variant writes, the dashboard, exports, and privacy endpoints require a Bearer token. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
+<p>Variant writes, the dashboard, exports, privacy endpoints, and catalog reads (<code>/api/sites</code>, <code>/api/variants</code>, <code>/api/stats</code>) require a Bearer token or a signed-in session. The demo token reaches only the <code>demo</code> site. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>
 <p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% Wilson confidence intervals. A deterministic holdout arm (default 10% per selector) preserves a control group for true incremental lift.</p>
 <h2>Data flows</h2>

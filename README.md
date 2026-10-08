@@ -31,7 +31,8 @@ Environment:
 |---|---|---|
 | `PORT` | `3000` | listen port |
 | `DB_PATH` | `prism.db` | SQLite file (use a volume in prod) |
-| `ADMIN_TOKEN` | unset (open) | Bearer token for variant writes, /admin, /api/export |
+| `ADMIN_TOKEN` | unset (open) | Bearer token for variant writes, /admin, exports, and catalog reads |
+| `DEMO_TOKEN` | historical demo token, if unset | demo token (ask operator). Reaches only site `demo`. Rotation is a Fly secret (`fly secrets set DEMO_TOKEN=...`) |
 | `SITE_WRITE_KEY` | unset (open) | if set, snippet must send `data-key` to post traits/events |
 | `HOLDOUT_PCT` | `10` | % of eligible visitors held out as control per selector |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset (OAuth off) | Google OAuth client; enables `/auth/login` for browser access |
@@ -49,10 +50,29 @@ Environment:
   from the `accounts` table: `owner` (everything incl. plan changes), `editor`
   (variant CRUD, exports), `viewer` (read-only — the Agency tier's "read-only seat").
 - **Agents and scripts**: unchanged — `Authorization: Bearer $ADMIN_TOKEN`,
-  `READONLY_TOKENS`, `DEMO_TOKEN`, and `?token=` all keep working.
+  `READONLY_TOKENS`, `DEMO_TOKEN`, and `?token=` all keep working. The demo
+  token is scoped to site `demo` on every token-gated route (export, visitor
+  export/erasure, variant writes, and `GET /api/sites`, `/api/variants`, `/api/stats`).
 - Unset everything auth-related and the deployment is open (local-dev default).
 
 Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts`
+
+## End-to-end tests
+
+```sh
+bun install
+bun run test:e2e            # gating suite: landing, demo personas, admin, API, regressions (desktop + 390px mobile)
+bun run test:e2e:bugbash    # open bug repros; expected to fail until fixed
+```
+
+The `e2e` CLI needs Node.js 22.22.3+ or 24.8+ on `PATH` (`module.registerHooks`). `bun run` launches that CLI; the app process is still Bun.
+
+The runner (Playwright Chromium) starts `tests/support/serve.ts` on a free port with a fresh seeded
+SQLite DB and throwaway tokens. Admin tests sign in with that admin token (`?token=` and `Authorization: Bearer`).
+`DEV_AUTH_EMAIL` is set on the test server so a session-cookie check can hit `/auth/dev-login`. The gating suite
+is deterministic. `e2e.config.ts` still names a GitHub Copilot model for any future `agent.*` step
+(`npx e2e login github-copilot`); the returning-customer check clicks the persona itself.
+Latest report: `docs/e2e-report.md`.
 
 ## Install the snippet on your site
 
@@ -84,12 +104,13 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/identify` | POST | write key | upsert visitor traits |
 | `/api/decide` | POST | — | audience match → bandit pick per selector |
 | `/api/events` | POST | write key | impressions/conversions (sendBeacon-safe) |
-| `/api/variants` | GET/POST | GET open, POST token | list / create variants |
-| `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token | pause / remove |
-| `/api/stats?site=` | GET | — | per-variant rates, 95% Wilson CIs, holdout control |
-| `/api/export?site=` | GET | token | full tenant dump (variants, events, visitors) |
-| `/api/visitors/:id?site=` | GET/DELETE | token | GDPR/CCPA export & erasure |
-| `/api/sites/:site/plan` | POST | token | set a site's plan (`{plan: "growth"}`) |
+| `/api/variants` | GET/POST | token or session for that site; POST writes need admin, editor, or the demo token on `demo` | list / create variants |
+| `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token; demo token only for `demo` variants | pause / remove |
+| `/api/stats?site=` | GET | token or session for that site | per-variant rates, 95% Wilson CIs, holdout control |
+| `/api/sites` | GET | token or session; demo token lists `demo` only | site slugs the caller may see |
+| `/api/export?site=` | GET | token or session for that site | full tenant dump (variants, events, visitors) |
+| `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |
+| `/api/sites/:site/plan` | POST | admin token or owner session | set a site's plan (`{plan: "growth"}`) |
 
 ## Plans and limits
 
