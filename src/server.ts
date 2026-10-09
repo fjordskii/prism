@@ -15,7 +15,7 @@ import {
 } from "./auth";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { windowCounter, clientIp } from "./ratelimit";
-import { parsePilotInquiry, pilotPage } from "./offer";
+import { applyOffers, billingDecision, parsePilotInquiry, pilotPage, type PayView } from "./offer";
 
 // Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
@@ -560,7 +560,27 @@ const listInquiries = db.prepare(
   "SELECT id, email, store_url, monthly_visitors, note, created_at FROM pilot_inquiries ORDER BY id DESC"
 );
 
-app.get("/pilot", (c) => c.html(pilotPage("form")));
+async function ownerSession(c: AuthReq): Promise<boolean> {
+  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
+  return Boolean(email && accountRole(email) === "owner");
+}
+
+async function payView(c: AuthReq): Promise<PayView> {
+  const decision = billingDecision(process.env);
+  const showPay = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await ownerSession(c));
+  return { showPay, paymentLink: showPay ? decision.paymentLink : null };
+}
+
+app.get("/pilot", async (c) => c.html(pilotPage("form", await payView(c))));
+
+app.get("/pilot/thanks", (c) => c.html(pilotPage("paid")));
+
+app.get("/api/pilot/billing-status", async (c) => {
+  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const decision = billingDecision(process.env);
+  const priceShown = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await ownerSession(c));
+  return c.json({ mode: decision.mode, effectiveMode: decision.effectiveMode, priceShown });
+});
 
 app.post("/api/pilot/inquiry", async (c) => {
   const type = c.req.header("content-type") ?? "";
@@ -572,14 +592,15 @@ app.post("/api/pilot/inquiry", async (c) => {
   } catch {
     raw = null;
   }
+  const pay = await payView(c);
   if (!pilotInquiryRate.hit(clientIp((name) => c.req.header(name)) + "|pilot")) {
-    return wantsHtml ? c.html(pilotPage("error"), 429) : c.json({ error: "rate_limited" }, 429);
+    return wantsHtml ? c.html(pilotPage("error", pay), 429) : c.json({ error: "rate_limited" }, 429);
   }
   const parsed = parsePilotInquiry(raw);
-  if (!parsed.ok) return wantsHtml ? c.html(pilotPage("error"), 400) : c.json({ error: "invalid" }, 400);
+  if (!parsed.ok) return wantsHtml ? c.html(pilotPage("error", pay), 400) : c.json({ error: "invalid" }, 400);
   const inquiry = parsed.inquiry;
   insInquiry.run(inquiry.email, inquiry.storeUrl, inquiry.monthlyVisitors, inquiry.note, Date.now());
-  return wantsHtml ? c.html(pilotPage("thanks"), 200) : c.json({ ok: true });
+  return wantsHtml ? c.html(pilotPage("thanks", pay), 200) : c.json({ ok: true });
 });
 
 app.get("/api/pilot/inquiries", async (c) => {
@@ -673,11 +694,22 @@ app.use("/snippet.js", async (c, next) => {
   c.header("cache-control", "public, max-age=3600, stale-while-revalidate=86400");
 });
 app.use("/snippet.js", serveStatic({ path: "./public/snippet.js" }));
+let landingTemplate: string | undefined;
+
+async function landingDocument(pay: PayView): Promise<string> {
+  if (landingTemplate === undefined) landingTemplate = await Bun.file("landing/index.html").text();
+  return applyOffers(landingTemplate, pay);
+}
+
+app.use("/landing/*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === "/landing/" || path === "/landing/index.html") return c.html(await landingDocument(await payView(c)));
+  await next();
+});
 app.use("/landing/*", serveStatic({ root: "./landing", rewriteRequestPath: (p) => p.replace(/^\/landing/, "") || "/index.html" }));
 app.get("/landing", (c) => c.redirect("/"));
 app.use("/demo/*", serveStatic({ root: "./demo", rewriteRequestPath: (p) => p.replace(/^\/demo/, "") || "/index.html" }));
 app.get("/demo", (c) => c.redirect("/demo/"));
-// Root = the selling lander.
-app.get("/", serveStatic({ path: "./landing/index.html" }));
+app.get("/", async (c) => c.html(await landingDocument(await payView(c))));
 
 export default app;

@@ -224,6 +224,15 @@
   .tier ul { list-style: none; padding: 0; margin: 24px 0 28px; font-size: 14px; color: var(--mute); flex: 1; }
   .tier li { padding: 6px 0; border-top: 1px solid var(--hair); }
   .tier .btn { text-align: center; }
+  .offer-block { margin-top: 56px; }
+  .offer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 18px; }
+  @media (max-width: 1000px) { .offer-grid { grid-template-columns: 1fr; } }
+  .offer { border: 1px solid var(--hair); padding: 32px 28px; border-radius: 4px; display: flex; flex-direction: column; }
+  .offer.hot { border-color: var(--ink); }
+  .offer h3 { font-size: 17px; font-weight: 600; }
+  .offer-price { font-size: 36px; font-weight: 500; letter-spacing: -0.02em; margin-top: 8px; }
+  .offer p { margin-top: 12px; color: var(--mute); font-size: 15px; }
+  .offer .btn { display: inline-block; margin-top: 22px; text-align: center; }
 
   /* faq */
   details { border-top: 1px solid var(--hair); padding: 20px 0; }
@@ -478,6 +487,10 @@
         </ul>
         <a class="btn ghost" href="mailto:hello@sundaymorning.software">Talk to us</a>
       </div>
+    </div>
+    <div class="offer-block">
+      <p class="kicker">Pilot offer</p>
+      <!-- prism:offers -->
     </div>
   </section>
 
