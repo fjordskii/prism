@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS accounts (
   role TEXT NOT NULL DEFAULT 'editor',  -- owner | editor | viewer (viewer = read-only seat)
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pilot_inquiries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  store_url TEXT NOT NULL,
+  monthly_visitors TEXT,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);
 `);
 
 export type Variant = {
