@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { serveStatic } from "hono/bun";
 import { db, matchAudience, type Variant, type Rule } from "./db";
+import { parseOrder, reportArm } from "./money";
 import { banditScore } from "./bandit";
 import { dashboard } from "./dashboard";
 import { architecture } from "./architecture";
@@ -239,38 +240,75 @@ app.post("/api/decide", async (c) => {
 });
 
 // ---------- events ----------
-// Integrity: a conversion is only recorded if this visitor has an impression for the
-// same variant+selector (or a control impression for control conversions). Unknown
-// event types are dropped. Malformed JSON is a 400 via the app error handler.
+// A conversion is recorded only when this visitor has an impression for the same
+// variant and selector, or a control impression for a control conversion.
+// An order is one row per site and order id. It is credited to every arm this
+// visitor has already seen on the site. A later impression does not pick it up.
+// Unknown event types are dropped. Malformed JSON is a 400 via the app error handler.
+const insertEvent = db.prepare(
+  "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES (?, ?, ?, ?, ?, ?)"
+);
+const hasImp = db.prepare(
+  `SELECT 1 FROM events WHERE site = ? AND visitor_id = ? AND selector = ?
+   AND type = 'impression' AND (variant_id IS ? OR variant_id = ?) LIMIT 1`
+);
+const insertOrder = db.prepare(
+  "INSERT OR IGNORE INTO orders (site, order_id, visitor_id, currency, value_minor, ts) VALUES (?, ?, ?, ?, ?, ?)"
+);
+const insertCredit = db.prepare("INSERT OR IGNORE INTO order_credits (site, order_id, arm) VALUES (?, ?, ?)");
+const orderArms = db.prepare(
+  `SELECT DISTINCT CASE WHEN variant_id IS NULL THEN 'control' ELSE CAST(variant_id AS TEXT) END AS arm
+   FROM events WHERE site = ? AND visitor_id = ? AND type = 'impression'`
+);
+
 app.post("/api/events", async (c) => {
   const body = await c.req.json<{
     site: string;
     visitorId: string;
-    events: { variantId: number | null; selector: string; type: "impression" | "conversion" }[];
+    events: { variantId?: number | null; selector?: string; type?: string; orderId?: unknown; value?: unknown; currency?: unknown }[];
   }>();
   if (!body.site || !body.visitorId || !Array.isArray(body.events)) return c.json({ error: "bad payload" }, 400);
-  const stmt = db.prepare(
-    "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES (?, ?, ?, ?, ?, ?)"
-  );
-  const hasImp = db.prepare(
-    `SELECT 1 FROM events WHERE site = ? AND visitor_id = ? AND selector = ?
-     AND type = 'impression' AND (variant_id IS ? OR variant_id = ?) LIMIT 1`
-  );
-  const now = Date.now();
   let recorded = 0;
+  let duplicates = 0;
+  const rejected: { index: number; field: string; message: string }[] = [];
+  const dropped: { index: number; reason: string }[] = [];
   const tx = db.transaction(() => {
-    for (const e of body.events) {
-      if (!e || (e.type !== "impression" && e.type !== "conversion") || typeof e.selector !== "string") continue;
-      const variantId = e.variantId ?? null;
-      if (e.type === "conversion") {
-        if (!hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) continue;
+    body.events.forEach((e, index) => {
+      if (!e || typeof e !== "object") return;
+      if (e.type === "order") {
+        const parsed = parseOrder(e);
+        if (!parsed.ok) {
+          rejected.push({ index, field: parsed.field, message: parsed.message });
+          return;
+        }
+        const arms = orderArms.all(body.site, body.visitorId) as { arm: string }[];
+        if (arms.length === 0) {
+          dropped.push({ index, reason: "no impression" });
+          return;
+        }
+        if (insertOrder.run(body.site, parsed.order.orderId, body.visitorId, parsed.order.currency, parsed.order.valueMinor, Date.now()).changes === 0) {
+          duplicates++;
+          return;
+        }
+        for (const a of arms) insertCredit.run(body.site, parsed.order.orderId, a.arm);
+        recorded++;
+        return;
       }
-      stmt.run(body.site, body.visitorId, variantId, e.selector, e.type, now);
+      if ((e.type !== "impression" && e.type !== "conversion") || typeof e.selector !== "string") return;
+      const variantId = e.variantId ?? null;
+      if (e.type === "conversion" && !hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) return;
+      insertEvent.run(body.site, body.visitorId, variantId, e.selector, e.type, Date.now());
       recorded++;
-    }
+    });
   });
   tx();
-  return c.json({ ok: true, recorded });
+  return c.json({
+    ok: rejected.length === 0,
+    recorded,
+    ...(duplicates ? { duplicates } : {}),
+    ...(dropped.length ? { dropped } : {}),
+    ...(rejected.length ? { error: "invalid order", rejected } : {}),
+  }, rejected.length ? 400 : 200);
 });
 
 app.get("/api/sites", async (c) => {
@@ -360,10 +398,28 @@ app.get("/api/stats", async (c) => {
     )
     .get(site) as { impressions: number; conversions: number };
 
+  const exposedVisitors = db.prepare(
+    "SELECT DISTINCT visitor_id FROM events WHERE site = ? AND type = 'impression' AND variant_id IS ?"
+  );
+  const creditedOrders = db.prepare(
+    `SELECT o.visitor_id, o.currency, o.value_minor
+     FROM orders o JOIN order_credits c ON c.site = o.site AND c.order_id = o.order_id
+     WHERE o.site = ? AND c.arm = ?`
+  );
+  const armOrders = (variantId: number | null) => {
+    const visitors = exposedVisitors.all(site, variantId) as { visitor_id: string }[];
+    const orders = creditedOrders.all(site, variantId === null ? "control" : String(variantId)) as { visitor_id: string; currency: string; value_minor: number }[];
+    return reportArm(
+      visitors.map((v) => v.visitor_id),
+      orders.map((o) => ({ visitorId: o.visitor_id, currency: o.currency, valueMinor: o.value_minor })),
+    );
+  };
+
   const withCI = rows.map((r) => ({
     ...r,
     rate: r.impressions ? r.conversions / r.impressions : null,
     ci95: wilson(r.conversions, r.impressions),
+    ...armOrders(r.id),
   }));
 
   // Segments: trait field -> String(value) -> visitor count (top 50 fields).
@@ -391,6 +447,7 @@ app.get("/api/stats", async (c) => {
       ...control,
       rate: control.impressions ? control.conversions / control.impressions : null,
       ci95: wilson(control.conversions, control.impressions),
+      ...armOrders(null),
     },
     holdoutPct: HOLDOUT_PCT,
     plan,
@@ -409,6 +466,7 @@ app.get("/api/export", async (c) => {
     variants: db.prepare("SELECT * FROM variants WHERE site = ?").all(site),
     events: db.prepare("SELECT * FROM events WHERE site = ? ORDER BY ts").all(site),
     visitors: db.prepare("SELECT * FROM visitors WHERE site = ?").all(site),
+    orders: db.prepare("SELECT * FROM orders WHERE site = ? ORDER BY ts").all(site),
   });
 });
 
@@ -426,12 +484,15 @@ app.get("/api/visitors/:id", (c) => {
   return c.json({
     visitor: getVisitor.get(c.req.param("id"), site) ?? null,
     events: db.prepare("SELECT * FROM events WHERE visitor_id = ? AND site = ?").all(c.req.param("id"), site),
+    orders: db.prepare("SELECT * FROM orders WHERE visitor_id = ? AND site = ?").all(c.req.param("id"), site),
   });
 });
 app.delete("/api/visitors/:id", (c) => {
   const site = c.req.query("site") ?? "demo";
   const id = c.req.param("id");
   const tx = db.transaction(() => {
+    db.prepare("DELETE FROM order_credits WHERE site = ? AND order_id IN (SELECT order_id FROM orders WHERE site = ? AND visitor_id = ?)").run(site, site, id);
+    db.prepare("DELETE FROM orders WHERE visitor_id = ? AND site = ?").run(id, site);
     db.prepare("DELETE FROM events WHERE visitor_id = ? AND site = ?").run(id, site);
     db.prepare("DELETE FROM visitors WHERE id = ? AND site = ?").run(id, site);
   });
@@ -499,11 +560,11 @@ app.get("/privacy", (c) =>
     trustPage(
       "Privacy",
       `<h2>What we store</h2>
-<p>For each visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and any traits the site explicitly sends through <code>prism.identify()</code>. For each event: the variant shown, the selector, whether it was an impression or conversion, and a timestamp.</p>
+<p>For each visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and any traits the site explicitly sends through <code>prism.identify()</code>. For each event: the variant shown, the selector, whether it was an impression or conversion, and a timestamp. For each order: the order id, the amount in minor units, the currency, and a timestamp.</p>
 <h2>What we never do</h2>
 <p>We don't fingerprint browsers, set third-party cookies, or track visitors across sites. Visitor data is never sold or shared. Events stay in the site's own first-party context.</p>
 <h2>Your rights (GDPR / CCPA)</h2>
-<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code>, which removes their profile and every event. Both endpoints require the same Bearer token as the dashboard. Full site export: <code>GET /api/export?site=…</code> (also token-gated).</p>
+<p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code>, which removes their profile, every event, and every order. Both endpoints require the same Bearer token as the dashboard. Full site export: <code>GET /api/export?site=…</code> (also token-gated).</p>
 <h2>Retention &amp; subprocessors</h2>
 <p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. The only subprocessor is Fly.io. Contact: privacy@sundaymorning.software.</p>`
     )

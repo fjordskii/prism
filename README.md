@@ -89,6 +89,26 @@ prism.convert("#hero");                          // manual conversion
 
 Elements with `data-prism-convert="#selector"` auto-track conversions on click.
 
+## Record Shopify orders
+
+The snippet stores the visitor id in the `prism_vid` cookie. A Shopify custom pixel reads that cookie when checkout completes and posts an order to Prism.
+
+1. In Shopify admin, open Settings, then Customer events.
+2. Choose Add custom pixel. Name it Prism.
+3. Paste `integrations/shopify/custom-pixel.js`.
+4. Set `PRISM_HOST` to the Prism origin and `PRISM_SITE` to the same site slug as `data-site` on the snippet.
+5. If the snippet uses `data-cookie`, set `PRISM_COOKIE` to that name. The default is `prism_vid`.
+6. If the server has `SITE_WRITE_KEY` set, put the same value in `PRISM_WRITE_KEY`.
+7. Save, then Connect.
+
+The pixel calls `analytics.subscribe('checkout_completed', ...)` and `browser.cookie.get`, which are the [Shopify web pixel APIs](https://shopify.dev/docs/api/web-pixels-api). Shopify runs the pixel in a sandbox. It sends the order id, the checkout total, and the currency. It does not send the buyer email or address.
+
+An order is stored once per site and order id. Prism credits it to each variant, and to the control arm, that the visitor had already seen on that site. A visitor with no impression is dropped. Revenue, RPV, and AOV in `/api/stats` stay split by currency.
+
+`POST /api/events` accepts `{ "type": "order", "orderId": "gid://shopify/Order/1", "value": "48.00", "currency": "USD" }` inside the usual `events` array. `value` is a decimal amount. Prism stores integer minor units.
+
+Install this only on a store you control. A development store is the place to try a test order. `tests/fixtures/shopify-checkout-completed.json` is a recorded `checkout_completed` payload for a local replay when no development store is available.
+
 ## Authoring variants
 
 The dashboard's variant builder defaults to a visual block editor — add
@@ -105,10 +125,10 @@ Button blocks carry an optional conversion-selector field that emits
 |---|---|---|---|
 | `/api/identify` | POST | write key | upsert visitor traits |
 | `/api/decide` | POST | — | audience match → bandit pick per selector |
-| `/api/events` | POST | write key | impressions/conversions (sendBeacon-safe) |
+| `/api/events` | POST | write key | impressions, conversions, and orders (sendBeacon-safe) |
 | `/api/variants` | GET/POST | token or session for that site; POST writes need admin, editor, or the demo token on `demo` | list / create variants |
 | `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token; demo token only for `demo` variants | pause / remove |
-| `/api/stats?site=` | GET | token or session for that site | per-variant rates, 95% Wilson CIs, holdout control |
+| `/api/stats?site=` | GET | token or session for that site | per-variant click rate, orders, RPV, and AOV, with 95% intervals, plus holdout control |
 | `/api/sites` | GET | token or session; demo token lists `demo` only | site slugs the caller may see |
 | `/api/export?site=` | GET | token or session for that site | full tenant dump (variants, events, visitors) |
 | `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |

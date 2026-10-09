@@ -1,0 +1,66 @@
+{
+  "id": "sh-e1f9c0a2-4b18-4e7a-9c33-0a1b2c3d4e5f",
+  "name": "checkout_completed",
+  "type": "standard",
+  "timestamp": "2026-10-09T15:04:05.000Z",
+  "clientId": "shopify-client-fixture",
+  "seq": 1,
+  "context": {
+    "document": {
+      "location": {
+        "href": "https://checkout.shopify.com/checkouts/cn/thank-you",
+        "hostname": "checkout.shopify.com",
+        "pathname": "/checkouts/cn/thank-you"
+      },
+      "referrer": "https://checkout.shopify.com/",
+      "title": "Thank you"
+    },
+    "navigator": {
+      "cookieEnabled": true,
+      "language": "en-US",
+      "userAgent": "Mozilla/5.0 (fixture) AppleWebKit/537.36 Chrome/129.0.0.0"
+    },
+    "window": {
+      "innerWidth": 1280,
+      "innerHeight": 800,
+      "origin": "https://checkout.shopify.com"
+    }
+  },
+  "data": {
+    "checkout": {
+      "token": "fixture-checkout-token",
+      "currencyCode": "USD",
+      "email": "buyer@example.test",
+      "subtotalPrice": { "amount": 42, "currencyCode": "USD" },
+      "totalTax": { "amount": 3.84, "currencyCode": "USD" },
+      "totalPrice": { "amount": 48, "currencyCode": "USD" },
+      "order": { "id": "gid://shopify/Order/820982911946154508" },
+      "lineItems": [
+        {
+          "id": "gid://shopify/CartLine/1",
+          "quantity": 1,
+          "title": "Linen candle",
+          "variant": {
+            "id": "gid://shopify/ProductVariant/1",
+            "title": "Default",
+            "sku": "LINEN-1",
+            "price": { "amount": 42, "currencyCode": "USD" },
+            "product": {
+              "id": "gid://shopify/Product/1",
+              "title": "Linen candle",
+              "vendor": "Fixture",
+              "type": "Candle"
+            }
+          }
+        }
+      ],
+      "transactions": [
+        {
+          "gateway": "bogus",
+          "amount": { "amount": 48, "currencyCode": "USD" },
+          "paymentMethod": { "type": "creditCard", "name": "Bogus Gateway" }
+        }
+      ]
+    }
+  }
+}

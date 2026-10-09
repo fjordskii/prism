@@ -153,7 +153,7 @@ export function dashboard(): string {
   <div id="lift"></div>
   <div class="tablewrap">
   <table id="vt"><thead><tr>
-    <th>Name</th><th>Selector</th><th>Audience</th><th>Impressions</th><th>Conv.</th><th>Rate (95% CI)</th><th>Status</th><th style="text-align:right">Actions</th>
+    <th>Name</th><th>Selector</th><th>Audience</th><th>Impressions</th><th>Conv.</th><th>Rate (95% CI)</th><th>Orders</th><th>Orders/visitor</th><th>Revenue</th><th>RPV</th><th>AOV</th><th>Status</th><th style="text-align:right">Actions</th>
   </tr></thead><tbody></tbody></table>
   </div>
 </section>
@@ -390,6 +390,28 @@ function setMode(m) {
 document.getElementById('mode-visual').addEventListener('click', () => syncFromHTML());
 htmlEl.addEventListener('input', () => { previewEl.innerHTML = htmlEl.value; });
 function fmtCI(ci) { return ci ? (100*ci[0]).toFixed(1) + '–' + (100*ci[1]).toFixed(1) + '%' : ''; }
+function orderCi(ci, digits) {
+  return ci ? ' <span class="ci">' + ci[0].toFixed(digits) + '–' + ci[1].toFixed(digits) + '</span>' : '';
+}
+function fmtOpv(s) {
+  if (s.ordersPerVisitor == null) return '—';
+  return s.ordersPerVisitor.toFixed(3) + orderCi(s.ordersPerVisitorCi95, 3);
+}
+function fmtMoney(rows, field, ciField) {
+  if (!rows || !rows.length) return '—';
+  return rows.map(function (r) {
+    if (r[field] == null) return esc(r.currency) + ' —';
+    var ci = r[ciField];
+    return esc(r.currency) + ' ' + esc(r[field]) + (ci ? ' <span class="ci">' + esc(ci[0]) + '–' + esc(ci[1]) + '</span>' : '');
+  }).join('<br>');
+}
+function orderCells(s) {
+  return '<td>' + (s.orders || 0).toLocaleString() + orderCi(s.ordersCi95, 2) + '</td>' +
+    '<td class="rate">' + fmtOpv(s) + '</td>' +
+    '<td>' + fmtMoney(s.revenue, 'revenue', 'revenueCi95') + '</td>' +
+    '<td>' + fmtMoney(s.revenue, 'rpv', 'rpvCi95') + '</td>' +
+    '<td>' + fmtMoney(s.revenue, 'aov', 'aovCi95') + '</td>';
+}
 const OPSYM = { eq: '=', neq: '≠', gt: '>', lt: '<', gte: '≥', lte: '≤', contains: 'contains' };
 // datetime-local wants local wall time; toISOString() is UTC and shifts by the zone offset.
 function toLocalInput(ms) {
@@ -473,7 +495,7 @@ async function load() {
   tb.innerHTML = '';
   const maxImp = Math.max(1, ...stats.variants.map(s => s.impressions));
   for (const v of variants) {
-    const s = byId[v.id] || { impressions: 0, conversions: 0, rate: null, ci95: null };
+    const s = byId[v.id] || { impressions: 0, conversions: 0, rate: null, ci95: null, orders: 0, ordersPerVisitor: null, revenue: [] };
     const now = Date.now();
     let status = v.active ? '<span class="pill on">active</span>' : '<span class="pill off">paused</span>';
     if (v.ends_at && v.ends_at <= now) status = '<span class="pill off">expired</span>';
@@ -486,6 +508,7 @@ async function load() {
       '<td>' + s.impressions.toLocaleString() + '<div class="bar" style="width:' + (100 * s.impressions / maxImp) + '%"></div></td>' +
       '<td>' + s.conversions.toLocaleString() + '</td>' +
       '<td class="rate">' + (s.rate != null ? (100*s.rate).toFixed(1) + '%' : '—') + ' <span class="ci">' + fmtCI(s.ci95) + '</span></td>' +
+      orderCells(s) +
       '<td>' + status + '</td>' +
       '<td><div class="row-actions"><button data-edit="' + v.id + '">Edit</button>' +
       '<button onclick="toggle(' + v.id + ')">' + (v.active ? 'Pause' : 'Resume') + '</button>' +
@@ -501,6 +524,7 @@ async function load() {
       '<td>' + c.impressions.toLocaleString() + '<div class="bar ctrl" style="width:' + (100 * c.impressions / maxImp) + '%"></div></td>' +
       '<td>' + c.conversions.toLocaleString() + '</td>' +
       '<td class="rate">' + (c.rate != null ? (100*c.rate).toFixed(1) + '%' : '—') + ' <span class="ci">' + fmtCI(c.ci95) + '</span></td>' +
+      orderCells(c) +
       '<td colspan="2"></td>';
     tb.appendChild(tr);
   }
