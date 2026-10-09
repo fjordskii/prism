@@ -17,6 +17,11 @@ process.env.GOOGLE_CLIENT_ID = "unit-client-id";
 process.env.GOOGLE_CLIENT_SECRET = "unit-client-secret";
 process.env.DECIDE_RATE_PER_MIN = "20";
 process.env.DECIDE_NEW_VISITORS_PER_HOUR = "5";
+// Captured when src/auth.ts loads. This file imports the app first, so the
+// auth-gate file cannot unset them in time. Dev login stays off; redirect_uri
+// stays the request origin.
+delete process.env.DEV_AUTH_EMAIL;
+delete process.env.BASE_URL;
 
 let app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 let db: import("bun:sqlite").Database;
