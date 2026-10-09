@@ -1,16 +1,41 @@
 name: deploy
+
+# This file on the default branch is what runs. A pull request cannot change
+# these steps until it is merged.
 on:
-  push:
+  workflow_run:
+    workflows: [e2e]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
+    # Manual override: workflow_dispatch deploys the ref selected in the UI.
+    # Every other run is an e2e completion and must pass all three checks:
+    # - conclusion == success: failure, cancellation, and neutral skip deploy
+    # - event == push: pull_request and a manual e2e dispatch never deploy
+    # - head_branch == main: an e2e run on any other branch never deploys
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') }}
     runs-on: ubuntu-latest
-    concurrency: deploy
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run sets github.sha to the default-branch tip, which can
+          # move past the commit e2e tested. Dispatch has no workflow_run
+          # payload; github.sha is the commit of the ref that was selected.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+
       - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: git rev-parse HEAD
+
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
