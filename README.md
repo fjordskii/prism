@@ -42,6 +42,9 @@ Environment:
 | `DEV_AUTH_EMAIL` | unset | local dev only: `/auth/dev-login` signs in as this email, no Google round-trip. NEVER set in production |
 | `PRISM_PLAN` | `selfhost` | plan assigned to newly-registered sites (`selfhost` = unlimited) |
 | `READONLY_TOKENS` | unset | comma-separated tokens with read-only access (GET routes, /admin, /api/export); mutations rejected |
+| `BILLING_MODE` | `off` | `off`, `test`, or `live`. `off` shows no pay button |
+| `PILOT_PAYMENT_LINK` | unset | Stripe Payment Link URL. Test mode accepts only a URL that starts with `https://buy.stripe.com/test_` |
+| `BILLING_LIVE_APPROVED` | unset | set to `yes` before `BILLING_MODE=live` shows a pay button |
 
 ## Auth model
 
@@ -54,6 +57,32 @@ Environment:
   token is scoped to site `demo` on every token-gated route (export, visitor
   export/erasure, variant writes, and `GET /api/sites`, `/api/variants`, `/api/stats`).
 - Unset everything auth-related and the deployment is open (local-dev default).
+
+## Turn on pilot payment
+
+The pay button stays off until you set the link, the mode, and, for a real charge, the approval flag. The app does not call Stripe. `PILOT_PAYMENT_LINK` is the Payment Link URL, and the button is that link. Prices and the offer sentences live in `src/offer.ts`.
+
+1. In Stripe, create a Payment Link. Set its confirmation page to `https://prism-personalize.fly.dev/pilot/thanks`.
+2. For a test charge, the link has to start with `https://buy.stripe.com/test_`. Set the link and the mode.
+
+```sh
+fly secrets set PILOT_PAYMENT_LINK="https://buy.stripe.com/test_..." BILLING_MODE=test
+```
+
+3. Sign in as an owner and open `/pilot`. The page shows "Pay for the pilot". Open `/pilot` in a private window. The button is absent, and the inquiry form is still there.
+4. Check the mode with the admin token. `effectiveMode` is `test` when the link is a test link. It is `off` when the link is missing or is not a test link. `priceShown` is true only when the caller would see the pay button. In test mode, that caller is an owner session, so a token-only request reports `priceShown` false.
+
+```sh
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://prism-personalize.fly.dev/api/pilot/billing-status
+```
+
+5. To charge a real card, create a live Payment Link on `https://buy.stripe.com/` whose URL does not start with `https://buy.stripe.com/test_`. Then set the approval flag and the mode. Until `BILLING_LIVE_APPROVED` is `yes`, live mode behaves as off.
+
+```sh
+fly secrets set PILOT_PAYMENT_LINK="https://buy.stripe.com/..." BILLING_LIVE_APPROVED=yes BILLING_MODE=live
+```
+
+6. Smoke test. `effectiveMode` in the status response is `live`, and a logged-out visit to `/pilot` shows "Pay for the pilot". After payment, Stripe sends the buyer to `/pilot/thanks`.
 
 Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts`
 
@@ -133,6 +162,7 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/export?site=` | GET | token or session for that site | full tenant dump (variants, events, visitors) |
 | `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |
 | `/api/sites/:site/plan` | POST | admin token or owner session | set a site's plan (`{plan: "growth"}`) |
+| `/api/pilot/billing-status` | GET | admin token or owner session | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
 
 ## Plans and limits
 
