@@ -1,4 +1,3 @@
-// PRISM-032: a fresh boot on a pre-change database adds pilot_inquiries and keeps existing rows.
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";

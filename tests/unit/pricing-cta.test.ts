@@ -1,5 +1,3 @@
-// PRISM-032: every pricing card link on / is a public page.
-// Reads the served HTML, then follows redirects with no auth.
 import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,4 +1,3 @@
-// Fresh process: import the db module against DB_PATH and print what survived.
 const { db } = await import("../../src/db.ts");
 
 const visitor = db.prepare("SELECT id, site, visits, traits FROM visitors WHERE id = ?").get("keep-me");

@@ -1,4 +1,3 @@
-// PRISM-032: pricing buttons reach a public pilot page, and a visitor can send an inquiry.
 import { describe, test } from '@e2e-dev/web';
 import { expect } from 'e2e';
 import { ADMIN_TOKEN } from '../support/env.ts';

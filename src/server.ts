@@ -32,7 +32,7 @@ app.onError((err, c) => {
 });
 
 // Admin auth: Bearer token or session on mutating routes, the dashboard, and catalog reads.
-// Public (no auth): /api/identify, /api/decide, /api/events, /api/pilot/inquiry, /pilot, and the snippet files.
+// Public (no auth): /api/identify, /api/decide, /api/events, and the snippet files.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 // TODO: rotate by setting the Fly secret DEMO_TOKEN to a new value
 // (`fly secrets set DEMO_TOKEN=...`). This historical literal is the default
@@ -551,17 +551,8 @@ app.get("/auth/logout", (c) => {
   return c.redirect("/auth/login");
 });
 
-// ---------- pilot (public). Price and payment stay out until PRISM-018. ----------
-// The cap is read on the first inquiry so a unit file can set PILOT_INQUIRY_LIMIT
-// before it posts, even when another file already imported this module.
-let pilotInquiryRate: ReturnType<typeof windowCounter> | undefined;
-function pilotRate() {
-  if (!pilotInquiryRate) {
-    const limit = Number(process.env.PILOT_INQUIRY_LIMIT ?? 8);
-    pilotInquiryRate = windowCounter(Number.isFinite(limit) && limit > 0 ? limit : 8, 3_600_000);
-  }
-  return pilotInquiryRate;
-}
+const PILOT_INQUIRY_LIMIT = Number(process.env.PILOT_INQUIRY_LIMIT ?? 8);
+const pilotInquiryRate = windowCounter(PILOT_INQUIRY_LIMIT, 3_600_000);
 const insInquiry = db.prepare(
   "INSERT INTO pilot_inquiries (email, store_url, monthly_visitors, note, created_at) VALUES (?, ?, ?, ?, ?)"
 );
@@ -581,7 +572,7 @@ app.post("/api/pilot/inquiry", async (c) => {
   } catch {
     raw = null;
   }
-  if (!pilotRate().hit(clientIp((name) => c.req.header(name)) + "|pilot")) {
+  if (!pilotInquiryRate.hit(clientIp((name) => c.req.header(name)) + "|pilot")) {
     return wantsHtml ? c.html(pilotPage("error"), 429) : c.json({ error: "rate_limited" }, 429);
   }
   const parsed = parsePilotInquiry(raw);

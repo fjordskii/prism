@@ -1,4 +1,3 @@
-// PRISM-032: public pilot inquiries. Validation, honeypot, rate limit, and the owner-only read.
 import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +9,6 @@ process.env.ADMIN_TOKEN = ADMIN;
 process.env.DEMO_TOKEN = "unit-demo-token";
 process.env.READONLY_TOKENS = "unit-readonly-token";
 process.env.HOLDOUT_PCT = "0";
-process.env.PILOT_INQUIRY_LIMIT = "2";
-process.env.GOOGLE_ALLOWED_EMAILS = "owner@prism.test:owner,editor@prism.test,viewer@prism.test:viewer";
 delete process.env.GOOGLE_CLIENT_ID;
 delete process.env.GOOGLE_CLIENT_SECRET;
 delete process.env.DEV_AUTH_EMAIL;
@@ -124,12 +121,15 @@ test("the per-IP rate limit stores nothing past the cap and returns 429", async 
   const before = count();
   const ip = "203.0.113.40";
   const statuses = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 12; i++) {
     const res = await post({ ...valid, email: `rate${i}@shop.example` }, ip);
     statuses.push(res.status);
   }
-  expect(statuses).toEqual([200, 200, 429]);
-  expect(count()).toBe(before + 2);
+  const saved = statuses.filter((status) => status === 200).length;
+  const blocked = statuses.filter((status) => status === 429).length;
+  expect(saved).toBe(8);
+  expect(blocked).toBe(4);
+  expect(count()).toBe(before + 8);
   const other = await post({ ...valid, email: "other@shop.example" }, "203.0.113.41");
   expect(other.status).toBe(200);
   const form = await app.request("http://127.0.0.1/api/pilot/inquiry", {

@@ -1,6 +1,3 @@
-// Pilot offer: visitor copy, inquiry checks, and the public page.
-// PRISM-018 adds a price and a pay button in this file. No billing here.
-
 export const pilotCopy = {
   button: "Book a pilot",
   heading: "Try Prism on your Shopify store",
