@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export type PixelOrderBody = {
   site: string;
@@ -9,13 +12,13 @@ export type PixelOrderBody = {
 
 type Mapper = (checkout: unknown, visitorId: string | null | undefined) => PixelOrderBody | null;
 
-export function loadOrderEventFromCheckout(root = join(import.meta.dir, "../..")): Mapper {
-  const src = readFileSync(join(root, "integrations/shopify/custom-pixel.js"), "utf8");
+export function loadOrderEventFromCheckout(dir = root): Mapper {
+  const src = readFileSync(join(dir, "integrations/shopify/custom-pixel.js"), "utf8");
   return new Function(`${src}\nreturn orderEventFromCheckout;`)() as Mapper;
 }
 
-export function recordedCheckout(root = join(import.meta.dir, "../..")) {
-  return JSON.parse(readFileSync(join(root, "tests/fixtures/shopify-checkout-completed.json"), "utf8")) as {
+export function recordedCheckout(dir = root) {
+  return JSON.parse(readFileSync(join(dir, "tests/fixtures/shopify-checkout-completed.json"), "utf8")) as {
     data: { checkout: { email?: string; order: { id: string }; totalPrice: { amount: number; currencyCode: string } } };
   };
 }

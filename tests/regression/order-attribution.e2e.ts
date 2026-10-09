@@ -1,9 +1,12 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, test } from "@e2e-dev/web";
 import { expect } from "e2e";
 import { ADMIN_TOKEN } from "../support/env.ts";
 import { api } from "../support/helpers.ts";
 import { loadOrderEventFromCheckout, recordedCheckout } from "../support/pixel.ts";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -29,8 +32,8 @@ describe("regression: order attribution", { tags: ["regression"] }, () => {
     });
     expect(impression.body.recorded).toBe(1);
 
-    const checkout = recordedCheckout(join(import.meta.dir, "../.."));
-    const mapped = loadOrderEventFromCheckout(join(import.meta.dir, "../.."))(checkout.data.checkout, vid);
+    const checkout = recordedCheckout(root);
+    const mapped = loadOrderEventFromCheckout(root)(checkout.data.checkout, vid);
     expect(mapped?.events[0]?.orderId).toBe("gid://shopify/Order/820982911946154508");
     const posted = await api(app.baseUrl, "/api/events", { method: "POST", json: { ...mapped, site } });
     expect(posted.status).toBe(200);
@@ -72,7 +75,9 @@ describe("regression: order attribution", { tags: ["regression"] }, () => {
 
     await app.open(`/admin?token=${ADMIN_TOKEN}&site=${site}`);
     await expect(screen.getByRole("columnheader", "Revenue")).toBeVisible();
-    await expect(screen.getByText("USD 48.00", { exact: false })).toBeVisible();
-    await expect(screen.getByText("USD 12.50", { exact: false })).toBeVisible();
+    await expect(screen.getByRole("cell", "Order hero")).toBeVisible();
+    await expect(screen.getByRole("cell", "USD 48.00").first()).toBeVisible();
+    await expect(screen.getByRole("cell", "Control (holdout)")).toBeVisible();
+    await expect(screen.getByRole("cell", "USD 12.50").first()).toBeVisible();
   });
 });
