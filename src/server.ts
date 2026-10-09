@@ -15,6 +15,7 @@ import {
 } from "./auth";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { windowCounter, clientIp } from "./ratelimit";
+import { parsePilotInquiry, pilotPage } from "./offer";
 
 // Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
@@ -31,7 +32,7 @@ app.onError((err, c) => {
 });
 
 // Admin auth: Bearer token or session on mutating routes, the dashboard, and catalog reads.
-// Public (no auth): /api/identify, /api/decide, /api/events, and the snippet files.
+// Public (no auth): /api/identify, /api/decide, /api/events, /api/pilot/inquiry, /pilot, and the snippet files.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 // TODO: rotate by setting the Fly secret DEMO_TOKEN to a new value
 // (`fly secrets set DEMO_TOKEN=...`). This historical literal is the default
@@ -548,6 +549,63 @@ app.get("/auth/dev-login", async (c) => {
 app.get("/auth/logout", (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: secureCookies(c) });
   return c.redirect("/auth/login");
+});
+
+// ---------- pilot (public). Price and payment stay out until PRISM-018. ----------
+// The cap is read on the first inquiry so a unit file can set PILOT_INQUIRY_LIMIT
+// before it posts, even when another file already imported this module.
+let pilotInquiryRate: ReturnType<typeof windowCounter> | undefined;
+function pilotRate() {
+  if (!pilotInquiryRate) {
+    const limit = Number(process.env.PILOT_INQUIRY_LIMIT ?? 8);
+    pilotInquiryRate = windowCounter(Number.isFinite(limit) && limit > 0 ? limit : 8, 3_600_000);
+  }
+  return pilotInquiryRate;
+}
+const insInquiry = db.prepare(
+  "INSERT INTO pilot_inquiries (email, store_url, monthly_visitors, note, created_at) VALUES (?, ?, ?, ?, ?)"
+);
+const listInquiries = db.prepare(
+  "SELECT id, email, store_url, monthly_visitors, note, created_at FROM pilot_inquiries ORDER BY id DESC"
+);
+
+app.get("/pilot", (c) => c.html(pilotPage("form")));
+
+app.post("/api/pilot/inquiry", async (c) => {
+  const type = c.req.header("content-type") ?? "";
+  const wantsHtml = type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data");
+  let raw: unknown = null;
+  try {
+    if (type.includes("application/json")) raw = await c.req.json();
+    else if (wantsHtml) raw = await c.req.parseBody();
+  } catch {
+    raw = null;
+  }
+  if (!pilotRate().hit(clientIp((name) => c.req.header(name)) + "|pilot")) {
+    return wantsHtml ? c.html(pilotPage("error"), 429) : c.json({ error: "rate_limited" }, 429);
+  }
+  const parsed = parsePilotInquiry(raw);
+  if (!parsed.ok) return wantsHtml ? c.html(pilotPage("error"), 400) : c.json({ error: "invalid" }, 400);
+  const inquiry = parsed.inquiry;
+  insInquiry.run(inquiry.email, inquiry.storeUrl, inquiry.monthlyVisitors, inquiry.note, Date.now());
+  return wantsHtml ? c.html(pilotPage("thanks"), 200) : c.json({ ok: true });
+});
+
+app.get("/api/pilot/inquiries", async (c) => {
+  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const rows = listInquiries.all() as {
+    id: number; email: string; store_url: string; monthly_visitors: string | null; note: string | null; created_at: number;
+  }[];
+  return c.json({
+    inquiries: rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      storeUrl: row.store_url,
+      monthlyVisitors: row.monthly_visitors,
+      note: row.note,
+      createdAt: row.created_at,
+    })),
+  });
 });
 
 // ---------- trust pages ----------

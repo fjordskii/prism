@@ -24,6 +24,10 @@ beforeAll(async () => {
   ({ db } = await import("../../src/db.ts"));
   ({ default: app } = await import("../../src/server.ts"));
   ({ makeSession } = await import("../../src/auth.ts"));
+  const upsert = db.prepare("INSERT OR REPLACE INTO accounts (email, role, created_at) VALUES (?, ?, ?)");
+  upsert.run("owner@prism.test", "owner", Date.now());
+  upsert.run("editor@prism.test", "editor", Date.now());
+  upsert.run("viewer@prism.test", "viewer", Date.now());
 });
 
 const count = () => (db.prepare("SELECT COUNT(*) AS n FROM pilot_inquiries").get() as { n: number }).n;

@@ -1,11 +1,11 @@
-// PRISM-032: booting on a pre-change database adds pilot_inquiries and keeps existing rows.
+// PRISM-032: a fresh boot on a pre-change database adds pilot_inquiries and keeps existing rows.
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("importing the db module adds pilot_inquiries without dropping existing rows", async () => {
+test("booting on a pre-change database adds pilot_inquiries without dropping existing rows", async () => {
   const path = join(mkdtempSync(join(tmpdir(), "prism-migrate-")), "prism.db");
   const old = new Database(path);
   old.exec(`
@@ -50,17 +50,25 @@ test("importing the db module adds pilot_inquiries without dropping existing row
   `);
   old.close();
 
-  process.env.DB_PATH = path;
-  const { db } = await import("../../src/db.ts");
-
-  const visitor = db.prepare("SELECT id, site, visits, traits FROM visitors WHERE id = ?").get("keep-me");
-  expect(visitor).toEqual({ id: "keep-me", site: "demo", visits: 4, traits: '{"orders":2}' });
-  expect((db.prepare("SELECT COUNT(*) AS n FROM variants").get() as { n: number }).n).toBe(1);
-  expect((db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n).toBe(1);
-  expect((db.prepare("SELECT plan FROM sites WHERE site = ?").get("demo") as { plan: string }).plan).toBe("growth");
-  expect((db.prepare("SELECT role FROM accounts WHERE email = ?").get("owner@prism.test") as { role: string }).role).toBe("owner");
-
-  const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pilot_inquiries'").get();
-  expect(table).toEqual({ name: "pilot_inquiries" });
-  expect((db.prepare("SELECT COUNT(*) AS n FROM pilot_inquiries").get() as { n: number }).n).toBe(0);
+  const proc = Bun.spawn(["bun", "tests/support/boot-migrate.ts"], {
+    cwd: join(import.meta.dir, "../.."),
+    env: { ...process.env, DB_PATH: path },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  expect(code, stderr).toBe(0);
+  expect(JSON.parse(stdout)).toEqual({
+    visitor: { id: "keep-me", site: "demo", visits: 4, traits: '{"orders":2}' },
+    table: { name: "pilot_inquiries" },
+    inquiries: 0,
+    variants: 1,
+    events: 1,
+    site: { plan: "growth" },
+    account: { role: "owner" },
+  });
 });
