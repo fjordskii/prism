@@ -59,7 +59,7 @@ Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts
 
 ## End-to-end tests
 
-CI: the `e2e` workflow runs unit + e2e on every PR and push to main.
+CI: the `e2e` workflow runs unit + e2e on every PR and push to main. Production deploy runs only after that workflow succeeds on the same commit pushed to `main`; a pull request's e2e run never deploys, and a failed e2e on main does not deploy. Manual `workflow_dispatch` of the deploy workflow deploys the selected ref.
 
 ```sh
 bun install
