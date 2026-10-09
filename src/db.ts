@@ -73,6 +73,28 @@ for (const col of ["starts_at INTEGER", "ends_at INTEGER"]) {
   try { db.exec(`ALTER TABLE variants ADD COLUMN ${col}`); } catch { /* already there */ }
 }
 
+// Orders are their own fact. One row per site and order id. Credits name the
+// arms the visitor had already seen when the order was accepted.
+db.exec(`
+CREATE TABLE IF NOT EXISTS orders (
+  site TEXT NOT NULL,
+  order_id TEXT NOT NULL,
+  visitor_id TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  value_minor INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (site, order_id)
+);
+CREATE TABLE IF NOT EXISTS order_credits (
+  site TEXT NOT NULL,
+  order_id TEXT NOT NULL,
+  arm TEXT NOT NULL,
+  PRIMARY KEY (site, order_id, arm)
+);
+CREATE INDEX IF NOT EXISTS idx_orders_visitor ON orders(site, visitor_id);
+CREATE INDEX IF NOT EXISTS idx_order_credits_arm ON order_credits(site, arm);
+`);
+
 export type Op =
   | { op: "html"; html: string }
   | { op: "text"; text: string }

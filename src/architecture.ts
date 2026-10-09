@@ -24,6 +24,7 @@ sequenceDiagram
     participant LS as localStorage cache (5 min)
     participant API as Prism API (Hono)
     participant DB as SQLite
+    participant PX as Shopify pixel
     V->>S: GET page
     S-->>V: HTML + script defer src=/snippet.js data-site=shop
     Note over SN: Runs AFTER first paint, never blocks render
@@ -52,6 +53,8 @@ sequenceDiagram
     V->>S: Click data-prism-convert element
     SN->>API: POST /api/events (conversion)
     API->>DB: Recorded only with matching prior impression
+    PX->>API: POST /api/events (order)
+    API->>DB: One row per order id, credited to arms already seen
     V->>S: SPA navigation (pushState / popstate)
     SN->>SN: onNav, re-decide for new route
 </div>
@@ -67,15 +70,16 @@ flowchart TB
     subgraph Edge["Prism service (Bun + Hono)"]
         AUTH["Auth: ADMIN_TOKEN full write; READONLY_TOKENS read-only seats; DEMO_TOKEN demo-site writes; SITE_WRITE_KEY ingest"]
         DECIDE["POST /api/decide: metering, plan gate, audience match, holdout, bandit"]
-        EVENTS["POST /api/events: conversion requires prior impression"]
+        EVENTS["POST /api/events: conversion and order require a prior impression"]
         CRUD["/api/variants CRUD + site-cap 402"]
-        STATS["GET /api/stats: rates, Wilson CIs, control, plan, usage, segments"]
+        STATS["GET /api/stats: click rate, orders, RPV, AOV, control, plan, usage, segments"]
         DSR["/api/export and /api/visitors/:id: GDPR export/erasure"]
     end
     subgraph Data["SQLite (WAL, embedded)"]
         V[("visitors: id, site, traits, last_seen")]
         VA[("variants: site, selector, ops, audience, weight, schedule, active")]
         E[("events: visitor, variant?, type, ts")]
+        O[("orders: order id, minor units, currency, credited arms")]
         SI[("sites: site, plan, created_at")]
     end
     subgraph Plans["Plan enforcement (src/plans.ts)"]
