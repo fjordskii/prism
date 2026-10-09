@@ -59,6 +59,8 @@ Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts
 
 ## End-to-end tests
 
+CI: the `e2e` workflow runs unit + e2e on every PR and push to main.
+
 ```sh
 bun install
 bun run test:e2e            # gating suite: landing, demo personas, admin, API, regressions (desktop + 390px mobile)
