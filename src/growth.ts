@@ -244,7 +244,7 @@ ${opts.trackClicks ? `  function carry(href) {
       return href;
     }
   }
-  document.querySelectorAll("#pricing a").forEach(function (link) {
+  document.querySelectorAll("a").forEach(function (link) {
     var href = link.getAttribute("href") || "";
     var dest = carry(href);
     if (dest !== href) link.setAttribute("href", dest);

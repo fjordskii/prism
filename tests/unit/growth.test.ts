@@ -91,7 +91,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(range.ok).toBe(false);
   });
 
-  test("PRISM-036 pricing /pilot hrefs keep landing UTM params", () => {
+  test("PRISM-036 every internal /pilot href keeps landing UTM params", () => {
     expect(growth.isPilotHref("/pilot")).toBe(true);
     expect(growth.isPilotHref("/pilot?utm_source=newsletter")).toBe(true);
     expect(growth.isPilotHref("/admin")).toBe(false);
@@ -104,7 +104,9 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(growth.carryUtmToPilot("/admin", "?utm_source=newsletter")).toBe("/admin");
     expect(growth.carryUtmToPilot("/pilot", "")).toBe("/pilot");
     const script = growth.growthClientScript({ view: "landing_view", trackClicks: true });
-    expect(script).toContain('document.querySelectorAll("#pricing a")');
+    expect(script).toContain('document.querySelectorAll("a")');
+    expect(script).not.toContain('document.querySelectorAll("#pricing a")');
+    expect(script).toContain('node.closest("#pricing a")');
     expect(script).toContain("utm_campaign");
   });
 
