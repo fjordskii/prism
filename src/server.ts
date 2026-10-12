@@ -661,12 +661,10 @@ app.get("/terms", (c) =>
   c.html(
     trustPage(
       "Terms",
-      `<h2>Service</h2>
-<p>Prism provides client-side website personalization as hosted software. Plans: Shadow ($0, 10k visitors/mo, tracking only), Growth ($79/mo, 100k visitors/mo, 3 sites), Pro ($179/mo, 500k visitors/mo, 5 sites), Agency ($299/mo, 1M visitors/mo, unlimited sites, white-label).</p>
-<h2>Billing</h2>
-<p>Annual prepay: 2 months free (pay 10, get 12). Renewal price locked for 12 months. Overage: service continues and we contact you to right-size before any charge. Cancel anytime. You keep a full data export (<code>/api/export</code>).</p>
+      `<h2>Service and Billing</h2>
+<p>Prism is hosted software for client-side website personalization. Offers: Discovery (free for the first 5 stores), Pilot ($750 flat for 30 days, fully refunded if setup or the day-30 report isn't delivered, no lift guarantee), and Retain ($299/mo, month to month). Cancel anytime. You keep a full data export at <code>/api/export</code>.</p>
 <h2>Availability</h2>
-<p>SLA on paid plans: 99.9% monthly uptime, measured at the Fly edge. Miss it and you get a service credit of 10x the downtime (1 hour down = 10 hours credited), applied automatically. Shadow is best-effort. The snippet fails open: any Prism outage means your visitors see your default site, never an error.</p>
+<p>We aim to keep Prism running at all times but don't offer an uptime guarantee or service credits during the pilot. The snippet fails open: if Prism is down, your visitors see your normal site, never an error.</p>
 <h2>Liability</h2>
 <p>You approve every variant. Prism never generates visitor-facing content at request time. Standard SaaS liability cap: fees paid in the trailing 12 months.</p>`
     )
