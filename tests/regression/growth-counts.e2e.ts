@@ -32,7 +32,7 @@ describe('regression: growth counts', { tags: ['regression'] }, () => {
       });
       if (listed.status !== 200) return `status ${listed.status}`;
       return campaigns(listed.body, campaign).join(',');
-    }, { timeout: 15_000 }).toBe('landing_view,pilot_cta');
+    }, { timeout: 15_000 }).toBe('landing_view,pilot_cta,pilot_view');
 
     const listed = await api(app.baseUrl, `/api/growth?from=${today}&to=${today}`, {
       headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
