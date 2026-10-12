@@ -20,7 +20,10 @@ export function dashboard(): string {
   .brand { font-size: 15px; font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
   .brand .mark { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #4c6ef5, #9775fa); }
   .brand .sub { font-weight: 500; color: var(--muted); }
-  .sitebar { display: flex; align-items: center; gap: 8px; }
+  .sitebar { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .sitebar select, #newSite { max-width: 100%; min-width: 0; }
+  .sitebar select { width: 9.5rem; }
+  #newSite { width: 7.5rem; }
   .sitebar label { font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   .topnav a { color: var(--muted); text-decoration: none; font-size: 13px; margin-left: 18px; }
   .topnav a:hover { color: var(--ink); }
@@ -125,15 +128,21 @@ export function dashboard(): string {
   .holdout-set label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .holdout-set input { width: 72px; }
   #holdoutNote { font-size: 12px; color: var(--muted); }
-  .exp { padding: 4px 0 8px; }
   .exp h3 { margin: 0; font-size: 14px; }
   .exp .aud { color: var(--muted); font-weight: 500; }
-  #experiences { padding: 4px 8px 12px; }
-  #experiences .quiet { color: var(--muted); padding: 8px 12px; }
+  #experiences { padding: 0 0 8px; }
+  #experiences .quiet { color: var(--muted); padding: 8px 20px; }
+  .metric { padding: 10px 20px 12px; border-top: 1px solid var(--line-soft); }
+  .metric-name { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .metric-arms { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 2px; }
+  .metric p { margin: 4px 0 0; overflow-wrap: anywhere; }
+  .card-head .meta { overflow-wrap: anywhere; }
+  .card-head .meta a { color: var(--accent-ink); margin-left: 12px; }
 
   @media (max-width: 720px) {
     #builder { grid-template-columns: 1fr; }
-    .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
+    .sitebar select, #newSite { max-width: 100%; }
     .topnav a { margin-left: 0; margin-right: 16px; }
     .wrap { padding: 16px 14px 48px; }
   }
@@ -143,16 +152,13 @@ export function dashboard(): string {
   <div class="sitebar">
     <label for="sitePicker">Site</label>
     <select id="sitePicker"></select>
-    <input id="newSite" placeholder="new site slug" style="width:130px">
+    <input id="newSite" placeholder="new site slug">
     <button id="addSite">Add</button>
   </div>
   <nav class="topnav">
     <a href="/demo/" target="_blank">Demo storefront ↗</a>
     <a id="archlink" href="/architecture">Architecture</a>
     <a id="export" href="#">Export JSON</a>
-    <a id="liftJson" href="#">Lift JSON</a>
-    <a id="liftHtml" href="#">Lift page</a>
-    <a id="liftCsv" href="#">Lift CSV</a>
   </nav>
 </header>
 
@@ -180,7 +186,7 @@ export function dashboard(): string {
 <section class="card">
   <div class="card-head">
     <h2>Audience holdouts</h2>
-    <div class="meta">each audience compared with its own control</div>
+    <div class="meta">each audience compared with its own control <a id="liftJson" href="#">JSON</a><a id="liftHtml" href="#">Printable page</a><a id="liftCsv" href="#">CSV</a></div>
   </div>
   <div id="experiences"></div>
 </section>
@@ -574,13 +580,13 @@ function renderExperiences(stats) {
   for (const exp of list) {
     const wrap = document.createElement('div');
     wrap.className = 'exp';
-    const rows = (exp.metrics || []).map(function (m) {
-      return '<tr><td>' + esc(m.label) + '</td><td>' + esc(m.treated) + '</td><td>' + esc(m.control) + '</td><td>' + esc(m.text) + '</td></tr>';
-    }).join('');
     wrap.innerHTML =
       '<div class="card-head"><h3>' + esc(exp.selector) + ' <span class="aud">' + esc(exp.audienceLabel) + '</span></h3></div>' +
-      '<div class="tablewrap"><table><thead><tr><th>Metric</th><th>Personalized</th><th>Control</th><th>Readout</th></tr></thead><tbody>' +
-      rows + '</tbody></table></div>';
+      (exp.metrics || []).map(function (m) {
+        return '<div class="metric"><div class="metric-name">' + esc(m.label) + '</div>' +
+          '<div class="metric-arms"><span>Personalized ' + esc(m.treated) + '</span><span>Control ' + esc(m.control) + '</span></div>' +
+          '<p>' + esc(m.text) + '</p></div>';
+      }).join('');
     root.appendChild(wrap);
   }
 }
