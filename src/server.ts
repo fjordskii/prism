@@ -16,6 +16,10 @@ import {
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { windowCounter, clientIp } from "./ratelimit";
 import { applyOffers, billingDecision, parsePilotInquiry, pilotPage, type PayView } from "./offer";
+import {
+  GROWTH_BODY_MAX, attributionFrom, growthClientScript, growthRange, growthReport, parseGrowthBody,
+  utcDay, type Attribution, type GrowthCountRow, type GrowthEvent,
+} from "./growth";
 
 // Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
@@ -165,6 +169,9 @@ const knownSite = db.prepare("SELECT 1 FROM sites WHERE site = ? UNION ALL SELEC
 const DECIDE_PER_MIN = Number(process.env.DECIDE_RATE_PER_MIN ?? 600);
 const NEW_VISITORS_PER_HOUR = Number(process.env.DECIDE_NEW_VISITORS_PER_HOUR ?? 120);
 const decideRate = windowCounter(DECIDE_PER_MIN, 60_000);
+const growthLimitRaw = Number(process.env.GROWTH_RATE_PER_MIN ?? process.env.DECIDE_RATE_PER_MIN ?? 600);
+const GROWTH_PER_MIN = Number.isFinite(growthLimitRaw) && growthLimitRaw >= 1 ? growthLimitRaw : 600;
+const growthRate = windowCounter(GROWTH_PER_MIN, 60_000);
 const newVisitorRate = windowCounter(NEW_VISITORS_PER_HOUR, 3_600_000);
 const SITE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -556,6 +563,76 @@ const pilotInquiryRate = windowCounter(PILOT_INQUIRY_LIMIT, 3_600_000);
 const insInquiry = db.prepare(
   "INSERT INTO pilot_inquiries (email, store_url, monthly_visitors, note, created_at) VALUES (?, ?, ?, ?, ?)"
 );
+const insGrowth = db.prepare(
+  `INSERT INTO growth_events (event, day, utm_source, utm_medium, utm_campaign, referrer_host, ts)
+   VALUES (?, ?, ?, ?, ?, ?, ?)`
+);
+const growthGrouped = db.prepare(
+  `SELECT event, day,
+          utm_source AS source, utm_medium AS medium, utm_campaign AS campaign,
+          referrer_host AS referrerHost, COUNT(*) AS count
+   FROM growth_events
+   WHERE day >= ? AND day <= ?
+   GROUP BY event, day, utm_source, utm_medium, utm_campaign, referrer_host`
+);
+
+function recordGrowth(event: GrowthEvent, attribution: Attribution, ts = Date.now()) {
+  insGrowth.run(
+    event,
+    utcDay(ts),
+    attribution.source,
+    attribution.medium,
+    attribution.campaign,
+    attribution.referrerHost,
+    ts,
+  );
+}
+
+// Public count. The client IP is a rate-limit key in memory only; it is not written.
+app.post("/api/growth", async (c) => {
+  const declared = Number(c.req.header("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > GROWTH_BODY_MAX) return c.json({ error: "too_large" }, 413);
+  let text = "";
+  try {
+    text = await c.req.text();
+  } catch {
+    return c.json({ error: "invalid" }, 400);
+  }
+  if (text.length > GROWTH_BODY_MAX) return c.json({ error: "too_large" }, 413);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return c.json({ error: "invalid" }, 400);
+  }
+  const event = parseGrowthBody(parsed, c.req.header("referer") ?? c.req.header("referrer"));
+  if (!event.ok) return c.json({ error: "invalid" }, 400);
+  const bucket = clientIp((name) => c.req.header(name)) + "|growth";
+  if (!growthRate.hit(bucket)) return c.json({ error: "rate_limited" }, 429);
+  recordGrowth(event.event, event.attribution);
+  return new Response(null, { status: 204 });
+});
+
+app.get("/api/growth", async (c) => {
+  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const range = growthRange(c.req.query("from"), c.req.query("to"));
+  if (!range.ok) return c.json({ error: "invalid" }, 400);
+  const rows = (growthGrouped.all(range.from, range.to) as Record<string, unknown>[]).map(mapGrowthRow);
+  return c.json(growthReport(rows, range.from, range.to));
+});
+
+function mapGrowthRow(row: Record<string, unknown>): GrowthCountRow {
+  return {
+    event: String(row.event),
+    day: String(row.day),
+    source: String(row.source ?? ""),
+    medium: String(row.medium ?? ""),
+    campaign: String(row.campaign ?? ""),
+    referrerHost: String(row.referrerHost ?? row.referrer_host ?? ""),
+    count: Number(row.count),
+  };
+}
+
 const listInquiries = db.prepare(
   "SELECT id, email, store_url, monthly_visitors, note, created_at FROM pilot_inquiries ORDER BY id DESC"
 );
@@ -599,7 +676,12 @@ app.post("/api/pilot/inquiry", async (c) => {
   const parsed = parsePilotInquiry(raw);
   if (!parsed.ok) return wantsHtml ? c.html(pilotPage("error", pay), 400) : c.json({ error: "invalid" }, 400);
   const inquiry = parsed.inquiry;
-  insInquiry.run(inquiry.email, inquiry.storeUrl, inquiry.monthlyVisitors, inquiry.note, Date.now());
+  const attribution = attributionFrom(raw, c.req.header("referer") ?? c.req.header("referrer"));
+  const now = Date.now();
+  db.transaction(() => {
+    insInquiry.run(inquiry.email, inquiry.storeUrl, inquiry.monthlyVisitors, inquiry.note, now);
+    recordGrowth("pilot_inquiry", attribution, now);
+  })();
   return wantsHtml ? c.html(pilotPage("thanks", pay), 200) : c.json({ ok: true });
 });
 
@@ -631,6 +713,7 @@ app.get("/privacy", (c) =>
       "Privacy",
       `<h2>What we store</h2>
 <p>For each visitor: a random ID in a first-party cookie (<code>prism_vid</code>, SameSite=Lax, 400 days), visit counts, and any traits the site explicitly sends through <code>prism.identify()</code>. For each event: the variant shown, the selector, whether it was an impression or conversion, and a timestamp. For each order: the order id, the amount in minor units, the currency, and a timestamp.</p>
+<p>On the landing page and the pilot page, Prism counts page views, clicks on the pilot buttons, copies of the install snippet, and inquiry form sends. Each count stores the date, the event name, the utm_source, utm_medium, and utm_campaign from the link, and the host of the referring site when one is available. The saved count has no cookie and no IP address.</p>
 <h2>What we never do</h2>
 <p>We don't fingerprint browsers, set third-party cookies, or track visitors across sites. Visitor data is never sold or shared. Events stay in the site's own first-party context.</p>
 <h2>Your rights (GDPR / CCPA)</h2>
@@ -698,7 +781,9 @@ let landingTemplate: string | undefined;
 
 async function landingDocument(pay: PayView): Promise<string> {
   if (landingTemplate === undefined) landingTemplate = await Bun.file("landing/index.html").text();
-  return applyOffers(landingTemplate, pay);
+  const html = applyOffers(landingTemplate, pay);
+  const script = growthClientScript({ view: "landing_view", trackClicks: true });
+  return html.includes("</body>") ? html.replace("</body>", `${script}\n</body>`) : html + script;
 }
 
 app.use("/landing/*", async (c, next) => {
