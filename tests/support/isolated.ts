@@ -19,10 +19,12 @@ export function restoreEnv(snap: EnvSnap) {
 // `bun test` keeps one module graph for the whole process. Specs that must
 // import the server under a different env run in a child process so they
 // cannot leave that graph, or a cleared OAuth env, behind.
-export async function runFileIsolated(file: string) {
+// extraEnv is copied onto the child only. Do not assign these on process.env
+// in the parent; that leaks into later files in the shared bun process.
+export async function runFileIsolated(file: string, extraEnv?: Record<string, string>) {
   const proc = Bun.spawn([process.execPath, "test", file], {
     cwd: join(import.meta.dir, "../.."),
-    env: { ...process.env, PRISM_TEST_ISOLATED: "1" },
+    env: { ...process.env, ...extraEnv, PRISM_TEST_ISOLATED: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
