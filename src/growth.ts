@@ -111,6 +111,28 @@ export function parseGrowthBody(
   return { ok: true, event: event as GrowthEvent, attribution: attributionFrom(body, refererHeader) };
 }
 
+export function isPilotHref(href: string): boolean {
+  return href === "/pilot" || href.startsWith("/pilot?") || href.startsWith("/pilot#");
+}
+
+// Copy landing-page UTM onto a /pilot href so the inquiry form keeps the same campaign.
+export function carryUtmToPilot(href: string, search: string): string {
+  if (!isPilotHref(href)) return href;
+  let url: URL;
+  try {
+    url = new URL(href, "https://prism.invalid");
+  } catch {
+    return href;
+  }
+  const query = search.startsWith("?") ? search.slice(1) : search;
+  const params = new URLSearchParams(query);
+  for (const key of ["utm_source", "utm_medium", "utm_campaign"] as const) {
+    const value = cleanUtm(params.get(key) ?? "");
+    if (value && !url.searchParams.get(key)) url.searchParams.set(key, value);
+  }
+  return url.pathname + url.search + url.hash;
+}
+
 export type GrowthCountRow = {
   event: string;
   day: string;
@@ -208,7 +230,26 @@ export function growthClientScript(opts: { view: "landing_view" | "pilot_view"; 
     } catch (err) {}
   }
   send(${JSON.stringify(opts.view)});
-${opts.trackClicks ? `  document.addEventListener("click", function (ev) {
+${opts.trackClicks ? `  function carry(href) {
+    if (!(href === "/pilot" || href.indexOf("/pilot?") === 0 || href.indexOf("/pilot#") === 0)) return href;
+    try {
+      var params = new URLSearchParams(location.search);
+      var next = new URL(href, location.origin);
+      ["utm_source", "utm_medium", "utm_campaign"].forEach(function (key) {
+        var value = params.get(key);
+        if (value && !next.searchParams.get(key)) next.searchParams.set(key, value);
+      });
+      return next.pathname + next.search + next.hash;
+    } catch (err) {
+      return href;
+    }
+  }
+  document.querySelectorAll("#pricing a").forEach(function (link) {
+    var href = link.getAttribute("href") || "";
+    var dest = carry(href);
+    if (dest !== href) link.setAttribute("href", dest);
+  });
+  document.addEventListener("click", function (ev) {
     var node = ev.target;
     if (!node || !node.closest) return;
     var link = node.closest("#pricing a");

@@ -44,4 +44,22 @@ describe('regression: growth counts', { tags: ['regression'] }, () => {
     expect(view).toEqual(expect.objectContaining({ source: 'e2e', medium: 'test', campaign, count: 1 }));
     expect(click).toEqual(expect.objectContaining({ source: 'e2e', medium: 'test', campaign, count: 1 }));
   });
+
+  test('PRISM-036 the pricing Book a pilot link carries landing UTM onto /pilot', async ({ app, browser, screen }) => {
+    const campaign = `prism036_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    await app.open(`/?utm_source=e2e&utm_medium=test&utm_campaign=${campaign}`);
+    await screen.scrollUntilVisible(screen.getByRole('heading', 'Start with a pilot'));
+    const pricingHref = await browser.evaluate(() =>
+      document.querySelector('#pricing a.btn')?.getAttribute('href') ?? '',
+    );
+    expect(pricingHref.startsWith('/pilot?')).toBe(true);
+    expect(pricingHref).toContain('utm_source=e2e');
+    expect(pricingHref).toContain('utm_medium=test');
+    expect(pricingHref).toContain(`utm_campaign=${campaign}`);
+    await screen.getByRole('link', 'Book a pilot').last().tap();
+    await expect(screen.getByRole('heading', 'Try Prism on your Shopify store', { level: 1 })).toBeVisible();
+    const pilotUrl = await browser.evaluate(() => location.pathname + location.search);
+    expect(pilotUrl).toContain('/pilot?');
+    expect(pilotUrl).toContain(`utm_campaign=${campaign}`);
+  });
 });

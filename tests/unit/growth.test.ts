@@ -91,6 +91,23 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(range.ok).toBe(false);
   });
 
+  test("PRISM-036 pricing /pilot hrefs keep landing UTM params", () => {
+    expect(growth.isPilotHref("/pilot")).toBe(true);
+    expect(growth.isPilotHref("/pilot?utm_source=newsletter")).toBe(true);
+    expect(growth.isPilotHref("/admin")).toBe(false);
+    expect(growth.carryUtmToPilot("/pilot", "?utm_source=newsletter&utm_medium=email&utm_campaign=oct")).toBe(
+      "/pilot?utm_source=newsletter&utm_medium=email&utm_campaign=oct",
+    );
+    expect(growth.carryUtmToPilot("/pilot?utm_source=ads", "?utm_source=newsletter&utm_campaign=oct")).toBe(
+      "/pilot?utm_source=ads&utm_campaign=oct",
+    );
+    expect(growth.carryUtmToPilot("/admin", "?utm_source=newsletter")).toBe("/admin");
+    expect(growth.carryUtmToPilot("/pilot", "")).toBe("/pilot");
+    const script = growth.growthClientScript({ view: "landing_view", trackClicks: true });
+    expect(script).toContain('document.querySelectorAll("#pricing a")');
+    expect(script).toContain("utm_campaign");
+  });
+
   test("aggregation sums a day and keeps the UTM breakdown", () => {
     const report = growth.growthReport([
       { event: "landing_view", day: "2026-10-12", source: "newsletter", medium: "email", campaign: "oct", referrerHost: "mail.google.com", count: 3 },
