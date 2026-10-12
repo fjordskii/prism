@@ -7,31 +7,41 @@ describe('landing page', { tags: ['landing'] }, () => {
     await app.open('/');
   });
 
-  test('hero states the offer and links to install + demo', async ({ screen, browser }) => {
-    await expect(browser).toHaveTitle('Prism: the right page for every visitor');
-    await expect(screen.getByRole('heading', 'Website personalization, decided in under a millisecond.', { level: 1 })).toBeVisible();
-    await expect(screen.getByRole('link', 'Install the snippet').first()).toHaveAttribute('href', '#install');
+  test('hero states the offer and links to pilot + demo', async ({ screen, browser }) => {
+    await expect(browser).toHaveTitle('Prism: personalization with a control group');
+    await expect(screen.getByRole('heading', 'Personalization with a control group built in.', { level: 1 })).toBeVisible();
+    await expect(screen.getByRole('link', 'Book a pilot').first()).toHaveAttribute('href', '/pilot');
     await expect(screen.getByRole('link', 'See the demo').first()).toHaveAttribute('href', '/demo/');
   });
 
-  test('pricing shows four tiers with prices', async ({ screen }) => {
-    const pricing = screen.getByRole('heading', 'Free until it proves itself');
+  test('pricing shows Discovery, Pilot, and Retain', async ({ screen }) => {
+    const pricing = screen.getByRole('heading', 'Start with a pilot');
     await screen.scrollUntilVisible(pricing);
-    for (const [tier, price] of [['Shadow', '$0'], ['Growth', '$79'], ['Pro', '$179'], ['Agency', '$299']] as const) {
-      await expect(screen.getByRole('heading', tier, { level: 3 })).toBeVisible();
-      // $0 also appears in the hero proof strip, so take the pricing card (last match)
-      await expect(screen.getByText(price, { exact: true }).last()).toBeAttached();
-    }
+    await expect(screen.getByRole('heading', 'Discovery', { level: 3 })).toBeVisible();
+    await expect(screen.getByRole('heading', 'Pilot', { level: 3 })).toBeVisible();
+    await expect(screen.getByRole('heading', 'Retain', { level: 3 })).toBeVisible();
+    await expect(screen.getByText('Free for the first 5 stores.')).toBeVisible();
+    await expect(screen.getByText('$750 flat for 30 days.')).toBeVisible();
+    await expect(screen.getByText('Ongoing management is $299/mo, month to month.')).toBeVisible();
   });
 
   test('the page fits the viewport width (no sideways scroll)', async ({ browser }) => {
     expect(await horizontalOverflow(browser)).toBeLessThanOrEqual(0);
   });
 
-  test('trust pages are linked from the footer and render', async ({ app, screen }) => {
+  test('trust pages are linked from the footer and render', async ({ app, screen, browser }) => {
     for (const [path, heading] of [['/privacy', 'Privacy'], ['/security', 'Security'], ['/terms', 'Terms']] as const) {
       await app.open(path);
       await expect(screen.getByRole('heading', heading, { level: 1 })).toBeVisible();
     }
+    await app.open('/terms');
+    await expect(screen.getByRole('heading', 'Service and Billing', { level: 2 })).toBeVisible();
+    await expect(screen.getByRole('heading', 'Availability', { level: 2 })).toBeVisible();
+    const terms = await browser.evaluate(() => document.body.textContent ?? '');
+    expect(terms).toContain("don't offer an uptime guarantee or service credits during the pilot");
+    expect(terms).toContain('The snippet fails open');
+    expect(terms).not.toContain('99.9%');
+    expect(terms).not.toContain('$79');
+    expect(terms).not.toContain('$179');
   });
 });
