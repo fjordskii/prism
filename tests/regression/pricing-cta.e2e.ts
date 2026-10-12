@@ -6,18 +6,15 @@ import { api, horizontalOverflow } from '../support/helpers.ts';
 describe('regression: pricing CTAs', { tags: ['regression'] }, () => {
   test('PRISM-032 every pricing card link is a public page', async ({ app, browser, screen }) => {
     await app.open('/');
-    await screen.scrollUntilVisible(screen.getByRole('heading', 'Free until it proves itself'));
+    await screen.scrollUntilVisible(screen.getByRole('heading', 'Start with a pilot'));
     const links = await browser.evaluate(() =>
-      [...document.querySelectorAll('#pricing .tier a')].map((a) => ({
+      [...document.querySelectorAll('#pricing a.btn')].map((a) => ({
         href: a.getAttribute('href') ?? '',
         text: (a.textContent ?? '').trim(),
       })),
     );
     expect(links).toEqual([
       { href: '/pilot', text: 'Book a pilot' },
-      { href: '/pilot', text: 'Book a pilot' },
-      { href: '/pilot', text: 'Book a pilot' },
-      { href: 'mailto:hello@sundaymorning.software', text: 'Talk to us' },
     ]);
 
     for (const link of links) {
@@ -40,14 +37,10 @@ describe('regression: pricing CTAs', { tags: ['regression'] }, () => {
 
   test('PRISM-032 Book a pilot submits and the admin token can read the inquiry', async ({ app, browser, screen }) => {
     await app.open('/');
-    await screen.scrollUntilVisible(screen.getByRole('heading', 'Free until it proves itself'));
-    for (const nth of [0, 1, 2]) {
-      await app.open('/');
-      await screen.scrollUntilVisible(screen.getByRole('heading', 'Free until it proves itself'));
-      await screen.getByRole('link', 'Book a pilot').nth(nth).tap();
-      await expect(screen.getByRole('heading', 'Try Prism on your Shopify store', { level: 1 })).toBeVisible();
-      expect(await horizontalOverflow(browser)).toBeLessThanOrEqual(0);
-    }
+    await screen.scrollUntilVisible(screen.getByRole('heading', 'Start with a pilot'));
+    await screen.getByRole('link', 'Book a pilot').last().tap();
+    await expect(screen.getByRole('heading', 'Try Prism on your Shopify store', { level: 1 })).toBeVisible();
+    expect(await horizontalOverflow(browser)).toBeLessThanOrEqual(0);
 
     const email = `buyer_${Date.now()}_${Math.random().toString(36).slice(2, 7)}@example.com`;
     await screen.getByLabel('Email').fill(email);

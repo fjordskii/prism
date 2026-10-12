@@ -109,6 +109,22 @@ CREATE INDEX IF NOT EXISTS idx_orders_visitor ON orders(site, visitor_id);
 CREATE INDEX IF NOT EXISTS idx_order_credits_arm ON order_credits(site, arm);
 `);
 
+// Marketing-site counts (landing and /pilot). One row per count. No visitor id,
+// no cookie, no IP. UTM fields and the referrer host are the only attribution.
+db.exec(`
+CREATE TABLE IF NOT EXISTS growth_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event TEXT NOT NULL,
+  day TEXT NOT NULL,
+  utm_source TEXT NOT NULL DEFAULT '',
+  utm_medium TEXT NOT NULL DEFAULT '',
+  utm_campaign TEXT NOT NULL DEFAULT '',
+  referrer_host TEXT NOT NULL DEFAULT '',
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_growth_day ON growth_events(day, event);
+`);
+
 export type Op =
   | { op: "html"; html: string }
   | { op: "text"; text: string }

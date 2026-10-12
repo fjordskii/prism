@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Prism: the right page for every visitor</title>
-<meta name="description" content="Prism shows every visitor the version of your site most likely to convert. One script tag, approved variants only, sub-millisecond decisions.">
+<title>Prism: personalization with a control group</title>
+<meta name="description" content="Show each visitor the page you wrote for them. Prism keeps some visitors on your normal page, so you can see whether personalization made a difference.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -80,7 +80,7 @@
   .hero-text { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-top: 40px; padding-bottom: 40px; }
   .hero h1 {
     font-size: clamp(36px, 4.8vw, 60px); font-weight: 500;
-    line-height: 1.04; letter-spacing: -0.025em; max-width: 13ch;
+    line-height: 1.04; letter-spacing: -0.025em; max-width: 22ch;
   }
   .hero .sub { margin-top: 22px; max-width: 40ch; font-size: 17px; color: #a9aea8; font-weight: 300; }
   .hero .actions { margin-top: 32px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -224,7 +224,7 @@
   .tier ul { list-style: none; padding: 0; margin: 24px 0 28px; font-size: 14px; color: var(--mute); flex: 1; }
   .tier li { padding: 6px 0; border-top: 1px solid var(--hair); }
   .tier .btn { text-align: center; }
-  .offer-block { margin-top: 56px; }
+  .offer-block { margin-top: 48px; }
   .offer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 18px; }
   @media (max-width: 1000px) { .offer-grid { grid-template-columns: 1fr; } }
   .offer { border: 1px solid var(--hair); padding: 32px 28px; border-radius: 4px; display: flex; flex-direction: column; }
@@ -233,6 +233,7 @@
   .offer-price { font-size: 36px; font-weight: 500; letter-spacing: -0.02em; margin-top: 8px; }
   .offer p { margin-top: 12px; color: var(--mute); font-size: 15px; }
   .offer .btn { display: inline-block; margin-top: 22px; text-align: center; }
+  .offer-cta { margin-top: 32px; }
 
   /* faq */
   details { border-top: 1px solid var(--hair); padding: 20px 0; }
@@ -270,14 +271,13 @@
 <main id="main">
   <header class="hero">
     <div class="wrap hero-text">
-      <h1>Website personalization, decided in under a millisecond.</h1>
+      <h1>Personalization with a control group built in.</h1>
       <p class="sub">
-        Prism splits your site the way a prism splits light: one beam in, a spectrum out.
-        You write a variant for each segment; the engine picks the best one per visitor,
-        from cache, in under a millisecond.
+        Show each visitor the page you wrote for them. Prism keeps some visitors on your normal page,
+        so you can see whether personalization made a difference.
       </p>
       <div class="actions">
-        <a class="btn solid" href="#install">Install the snippet</a>
+        <a class="btn solid" href="/pilot">Book a pilot</a>
         <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>
       </div>
     </div>
@@ -335,10 +335,10 @@
 
     <div class="wrap">
       <ul class="hero-proof">
-        <li><b>&lt;1 ms</b><span>warm-cache decision</span></li>
-        <li><b>3 KB</b><span>gzipped, zero dependencies</span></li>
-        <li><b>1 day</b><span>paste to first live variant</span></li>
-        <li><b>$0</b><span>shadow mode, 10k visitors/mo</span></li>
+        <li><b>&lt;1 ms</b><span>decision on a warm cache</span></li>
+        <li><b>3 KB</b><span>gzipped, no dependencies</span></li>
+        <li><b>Holdout</b><span>some visitors always see your default page</span></li>
+        <li><b>Orders</b><span>tracked alongside clicks</span></li>
       </ul>
     </div>
   </header>
@@ -360,15 +360,15 @@
     <ol class="steps">
       <li>
         <h3>Paste one line</h3>
-        <p>A 9&nbsp;KB script tag (3&nbsp;KB gzipped), loaded with <code>defer</code>. It never blocks rendering, and every change it makes is wrapped so a bad variant can never break your page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
+        <p>A deferred script tag, 3&nbsp;KB gzipped. Changes apply after first paint, and if anything fails your visitors see your normal page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
       </li>
       <li>
         <h3>Approve the variants</h3>
-        <p>You (or your AI agent, over the API) write the alternates: a gift-shopper hero, a subscribe-and-save strip, a re-sorted catalog. Prism only picks among what you approved. Nothing is generated at request time.</p>
+        <p>You or your AI agent write them through the API. Prism only serves what you approved. Nothing is generated at request time.</p>
       </li>
       <li>
-        <h3>It learns who converts</h3>
-        <p>Every impression and conversion feeds a Bayesian bandit. Winning variants earn more traffic automatically; losers fade out. You never run a test by hand or watch a significance calculator.</p>
+        <h3>Compare against the holdout</h3>
+        <p>A share of visitors keeps your default page. A Bayesian bandit sends more traffic to the variants that convert, and the report compares orders and revenue against that holdout.</p>
       </li>
     </ol>
   </section>
@@ -413,8 +413,9 @@
         <ul>
           <li>Swaps, inserts, reorders, or removes page sections per visitor segment</li>
           <li>Remembers visitors in a first-party cookie, no fingerprinting, and works with consent banners</li>
-          <li>Shifts traffic to winning variants automatically, per segment</li>
-          <li>Runs after first paint, so your Lighthouse score is untouched</li>
+          <li>Sends more traffic to the variants that win</li>
+          <li>Applies changes after first paint, so it doesn't hold up your page load</li>
+          <li>A visitor's first pageview may show your default page for a moment. Later visits use the cached decision</li>
           <li>Lets your AI agent author and manage variants through the same API you use</li>
         </ul>
       </div>
@@ -422,7 +423,7 @@
         <h3>What it never does</h3>
         <ul>
           <li><b>Never generates copy</b> or designs on the fly. Only your approved variants ship</li>
-          <li><b>Never blocks rendering</b> or flashes personalized content before paint</li>
+          <li><b>Never blocks rendering</b>. Changes apply after first paint</li>
           <li><b>Never requires</b> a redesign, a migration, or a CMS</li>
           <li><b>Never runs a model</b> in the request path. Decisions are rules plus statistics</li>
           <li><b>Never locks in your data</b>. Visitors, variants, and events are yours to export</li>
@@ -433,64 +434,12 @@
 
   <section id="pricing" class="pricing">
     <p class="kicker">Pricing</p>
-    <h2>Free until it proves itself</h2>
-    <p class="lede">Run Prism in shadow mode for a week. It tracks your segments and projects lift without changing a pixel. Pay when you turn personalization on. Annual prepay: two months free, renewal price locked for 12 months. If you go over your visitor cap, we contact you to right-size before any charge.</p>
-    <div class="price-grid">
-      <div class="tier">
-        <h3>Shadow</h3>
-        <div class="amount">$0</div>
-        <div class="per">forever</div>
-        <ul>
-          <li>Up to 10k visitors / mo</li>
-          <li>Segment discovery + projected lift</li>
-          <li>1 site</li>
-          <li>Community support</li>
-        </ul>
-        <a class="btn ghost" href="/pilot">Book a pilot</a>
-      </div>
-      <div class="tier hot">
-        <h3>Growth</h3>
-        <div class="amount">$79</div>
-        <div class="per">per month, or $790/yr</div>
-        <ul>
-          <li>Up to 100k visitors / mo</li>
-          <li>Live personalization + bandit optimization</li>
-          <li>3 sites</li>
-          <li>Agent API access</li>
-          <li>Email support</li>
-        </ul>
+    <h2>Start with a pilot</h2>
+    <div class="offer-block">
+      <!-- prism:offers -->
+      <div class="offer-cta">
         <a class="btn solid" href="/pilot">Book a pilot</a>
       </div>
-      <div class="tier">
-        <h3>Pro</h3>
-        <div class="amount">$179</div>
-        <div class="per">per month, or $1,790/yr</div>
-        <ul>
-          <li>Up to 500k visitors / mo</li>
-          <li>Everything in Growth</li>
-          <li>5 sites</li>
-          <li>Klaviyo / Segment integrations</li>
-          <li>Holdout + incrementality reports</li>
-        </ul>
-        <a class="btn ghost" href="/pilot">Book a pilot</a>
-      </div>
-      <div class="tier">
-        <h3>Agency</h3>
-        <div class="amount">$299</div>
-        <div class="per">per month, or $2,990/yr</div>
-        <ul>
-          <li>1M visitors / mo, per-site caps</li>
-          <li>Unlimited sites, one dashboard</li>
-          <li>White-label: your domain, your brand</li>
-          <li>Per-client export + read-only seats</li>
-          <li>Priority support, named contact</li>
-        </ul>
-        <a class="btn ghost" href="mailto:hello@sundaymorning.software">Talk to us</a>
-      </div>
-    </div>
-    <div class="offer-block">
-      <p class="kicker">Pilot offer</p>
-      <!-- prism:offers -->
     </div>
   </section>
 
@@ -541,11 +490,11 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
     <div style="margin-top:32px">
       <details open>
         <summary>Will it slow my site down?</summary>
-        <p>No. The snippet loads deferred and applies changes after first paint. Repeat visits read a local cache, so the decision costs zero network time.</p>
+        <p>The script loads deferred and changes apply after first paint. On repeat visits the cached decision applies without waiting for the network.</p>
       </details>
       <details open>
         <summary>Do visitors see a flash of the wrong content?</summary>
-        <p>A first-ever pageview can show the default briefly, since we never block paint. Every visit after that applies the cached decision before the frame is visible.</p>
+        <p>A first-ever pageview can show the default briefly, since we never block paint. Later visits use the cached decision.</p>
       </details>
       <details>
         <summary>Does it use AI to write my copy?</summary>
@@ -553,7 +502,7 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
       </details>
       <details>
         <summary>How is this different from an A/B testing tool?</summary>
-        <p>A/B tools split traffic randomly and wait for you to call a winner. Prism splits by visitor segment and continuously reallocates traffic to winners per segment, so the test runs and resolves itself.</p>
+        <p>An A/B test splits everyone and waits for you to pick a winner. Prism shows each visitor the variant meant for them and keeps a holdout on your default page, so you can check the result against people who saw nothing new.</p>
       </details>
       <details>
         <summary>What platforms does it work with?</summary>
@@ -564,8 +513,8 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
 
   <section class="final" style="border-bottom:0">
     <p class="kicker">Get started</p>
-    <h2>Your next visitor is not your average visitor.</h2>
-    <p class="lede">Paste the snippet, watch the segments appear, and turn on your first variant today.</p>
+    <h2>Your next visitor isn't your average visitor.</h2>
+    <p class="lede">Paste the snippet, approve a variant, and compare it against the holdout.</p>
     <div class="actions" style="margin-top:32px;display:flex;gap:14px">
       <a class="btn solid" href="#install">Install the snippet</a>
       <a class="btn ghost" href="/demo/" target="_blank">See the demo</a>

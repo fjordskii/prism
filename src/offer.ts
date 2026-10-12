@@ -1,3 +1,5 @@
+import { growthClientScript } from "./growth";
+
 export const pilotCopy = {
   button: "Book a pilot",
   heading: "Try Prism on your Shopify store",
@@ -205,6 +207,10 @@ export function pilotPage(view: "form" | "thanks" | "error" | "paid" = "form", p
           <span>Optional</span>
         </div>
         <textarea id="note" name="note" rows="4"></textarea>
+        <input type="hidden" name="utm_source" value="">
+        <input type="hidden" name="utm_medium" value="">
+        <input type="hidden" name="utm_campaign" value="">
+        <input type="hidden" name="referrer" value="">
         <button class="btn solid" type="submit">${pilotCopy.submit}</button>
       </form>`;
 
@@ -286,6 +292,7 @@ export function pilotPage(view: "form" | "thanks" | "error" | "paid" = "form", p
     <p class="fallback">Prefer email? Write to <a href="${pilotCopy.mailto}">hello@sundaymorning.software</a>.</p>
   </div>
 </main>
+${view === "form" ? growthClientScript({ view: "pilot_view", fillForm: true }) : ""}
 </body>
 </html>`;
 }

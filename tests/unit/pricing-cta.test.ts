@@ -58,12 +58,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
   test("pricing card links return 200 with no auth and never land on /admin or /auth/login", async () => {
     const html = await (await app.request("http://127.0.0.1/")).text();
     const hrefs = pricingCardHrefs(html);
-    expect(hrefs).toEqual([
-      "/pilot",
-      "/pilot",
-      "/pilot",
-      "mailto:hello@sundaymorning.software",
-    ]);
+    expect(hrefs).toEqual(["/pilot"]);
 
     for (const href of hrefs) {
       if (href.startsWith("mailto:")) continue;

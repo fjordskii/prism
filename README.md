@@ -45,6 +45,7 @@ Environment:
 | `BILLING_MODE` | `off` | `off`, `test`, or `live`. `off` shows no pay button |
 | `PILOT_PAYMENT_LINK` | unset | Stripe Payment Link URL. Test mode accepts only a URL that starts with `https://buy.stripe.com/test_` |
 | `BILLING_LIVE_APPROVED` | unset | set to `yes` before `BILLING_MODE=live` shows a pay button |
+| `GROWTH_RATE_PER_MIN` | `DECIDE_RATE_PER_MIN`, else `600` | per-client cap for `POST /api/growth` |
 
 ## Auth model
 
@@ -83,6 +84,69 @@ fly secrets set PILOT_PAYMENT_LINK="https://buy.stripe.com/..." BILLING_LIVE_APP
 ```
 
 6. Smoke test. `effectiveMode` in the status response is `live`, and a logged-out visit to `/pilot` shows "Pay for the pilot". After payment, Stripe sends the buyer to `/pilot/thanks`.
+
+## Landing counts
+
+The landing page and `/pilot` record five events so you can count pilot demand per week. The count is first-party. It sets no cookie and stores no IP address. A reload counts again.
+
+| Event | When it is recorded |
+|---|---|
+| `landing_view` | A browser loads `/` or `/landing/` |
+| `pilot_cta` | A click on a pricing card's "Book a pilot" link |
+| `pilot_view` | A browser loads `/pilot` |
+| `pilot_inquiry` | A valid pilot inquiry is stored |
+| `snippet_copy` | A click on the install snippet's Copy button |
+
+Each row stores the UTC day, `utm_source`, `utm_medium`, `utm_campaign`, and the host of the referring site. The path of the referrer is dropped. An IP address in the referrer is dropped.
+
+`POST /api/growth` is public. The pages call it with `sendBeacon` and ignore failures, so a counting error does not break the page. The JSON body is at most 1024 bytes:
+
+```json
+{
+  "event": "landing_view",
+  "utm_source": "newsletter",
+  "utm_medium": "email",
+  "utm_campaign": "oct",
+  "referrer": "https://mail.google.com/mail"
+}
+```
+
+`event` has to be one of the five names above. Any other name, a body over 1024 bytes, or a client over the per-minute cap is rejected and not stored. The cap is 600 requests a minute per client IP, the same window as `POST /api/decide`.
+
+Read the counts with the admin token or an owner session. Any other caller gets 401. `from` and `to` are inclusive UTC dates (`YYYY-MM-DD`). If you omit them, the range is the last 90 days through today.
+
+```sh
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "https://prism-personalize.fly.dev/api/growth?from=2026-10-01&to=2026-10-12"
+```
+
+```json
+{
+  "from": "2026-10-01",
+  "to": "2026-10-12",
+  "days": [
+    {
+      "day": "2026-10-12",
+      "events": {
+        "landing_view": {
+          "count": 4,
+          "utm": [
+            {
+              "source": "newsletter",
+              "medium": "email",
+              "campaign": "oct",
+              "referrerHost": "mail.google.com",
+              "count": 3
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+Days and events with a count of zero are left out. `utm` is the breakdown for that day and event. `?token=` works on this route the same way it does on the other admin routes.
 
 Seed the demo storefront data: `bun run src/seed.ts && bun run src/seed-stats.ts`
 
@@ -165,6 +229,8 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/sites/:site/holdout` | POST | admin token or owner session | set that site's holdout percent (`{holdoutPct: 30}`) or clear it (`{holdoutPct: null}`) so the deployment default applies |
 | `/api/sites/:site/lift-report` | GET | admin token or owner session | lift report for that site only. `format` is `json` (default), `html` (printable page), or `csv` |
 | `/api/pilot/billing-status` | GET | admin token or owner session | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
+| `/api/growth` | POST | — | count a landing or pilot event (allowlisted name, 1024-byte cap, per-client rate limit) |
+| `/api/growth?from=&to=` | GET | admin token or owner session | daily counts per event, with UTM and referrer-host breakdown |
 
 ## Plans and limits
 
