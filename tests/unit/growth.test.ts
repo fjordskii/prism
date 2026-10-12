@@ -360,7 +360,8 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(landing).toContain('href="/pilot"');
     const section = landing.match(/<section id="pricing"[\s\S]*?<\/section>/)?.[0] ?? "";
     const hrefs = [...section.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map((match) => match[1]);
-    expect(hrefs).toEqual(["/pilot", "/pilot", "/pilot", "mailto:hello@sundaymorning.software"]);
+    expect(hrefs).toEqual(["/pilot"]);
+    expect(landing).toContain('href="mailto:hello@sundaymorning.software"');
 
     const landingAlias = await (await app.request("http://127.0.0.1/landing/")).text();
     expect(landingAlias).toContain('send("landing_view")');

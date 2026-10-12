@@ -31,15 +31,17 @@ function randn(): number {
   return mag * Math.cos(2 * Math.PI * v);
 }
 
+// One indexed read per variant. Older events with no audience_key still count
+// for that variant. Events attributed to a different audience do not.
 const statsStmt = db.prepare(
   `SELECT
      SUM(type='impression') AS impressions,
      SUM(type='conversion') AS conversions
-   FROM events WHERE variant_id = ?`
+   FROM events WHERE variant_id = ? AND (audience_key IS NULL OR audience_key = ?)`
 );
 
-export function banditScore(variantId: number, weight: number): number {
-  const row = statsStmt.get(variantId) as { impressions: number | null; conversions: number | null };
+export function banditScore(variantId: number, weight: number, audienceKey: string | null = null): number {
+  const row = statsStmt.get(variantId, audienceKey) as { impressions: number | null; conversions: number | null };
   const imp = row.impressions ?? 0;
   const conv = row.conversions ?? 0;
   return sampleBeta(conv + weight, imp - conv + 1);

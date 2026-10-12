@@ -8,7 +8,10 @@ import { parseOrder, reportArm } from "./money";
 import { banditScore } from "./bandit";
 import { dashboard } from "./dashboard";
 import { architecture } from "./architecture";
-import { PLANS, sitePlan, usageFor, registerSite } from "./plans";
+import { PLANS, sitePlan, usageFor, registerSite, holdoutFor, saveHoldout } from "./plans";
+import { audienceKey, defaultHoldoutPct, isHoldout, pickExperience } from "./holdout";
+import { wilson, REPORT_NOTE } from "./lift";
+import { buildExperiences, renderLiftCsv, renderLiftHtml, type LiftReport } from "./experiences";
 import {
   oauthEnabled, DEV_EMAIL, SESSION_COOKIE, loginPage,
   accountRole, sessionEmail, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
@@ -151,9 +154,12 @@ app.post("/api/identify", async (c) => {
 });
 
 // ---------- decision ----------
-// Holdout: HOLDOUT_PCT of visitors per selector get control (no variant) but are still
-// tracked with variant_id=null so /api/stats can report true incremental lift.
-const HOLDOUT_PCT = Number(process.env.HOLDOUT_PCT ?? 10);
+// Each audience on a selector has its own holdout. The hash is visitor + selector
+// + audience, so a visitor does not flip arms on later requests. HOLDOUT_PCT is
+// the deployment default. A site row can override it.
+// The bandit read is still one indexed aggregate per candidate variant. The
+// audience predicate stays on that variant_id range. Decide does not scan the
+// events table.
 
 // Metering: decide counts visitors even before first identify, so usage is honest.
 // Only registered sites are metered (a sites row from registerSite / the plan
@@ -216,32 +222,42 @@ app.post("/api/decide", async (c) => {
     )
     .all(body.site, now, now) as Variant[];
 
-  const bySelector = new Map<string, Variant[]>();
+  const experiences = new Map<string, { selector: string; key: string; cands: Variant[] }>();
   for (const v of variants) {
     if (body.selectors?.length && !body.selectors.includes(v.selector)) continue;
-    const rules = JSON.parse(v.audience) as Rule[];
-    if (!matchAudience(rules, traits)) continue;
-    bySelector.set(v.selector, [...(bySelector.get(v.selector) ?? []), v]);
-  }
-
-  // Deterministic holdout per visitor+selector so a visitor doesn't flip in/out.
-  const holdout = (selector: string) => {
-    let h = 0;
-    const s = body.visitorId + ":" + selector;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return h % 100 < HOLDOUT_PCT;
-  };
-
-  const decisions: { selector: string; variantId: number | null; name: string; ops: unknown[]; control?: boolean }[] = [];
-  for (const [selector, cands] of bySelector) {
-    if (holdout(selector)) {
-      decisions.push({ selector, variantId: null, name: "control", ops: [], control: true });
+    let rules: Rule[] = [];
+    try {
+      const parsed = JSON.parse(v.audience) as unknown;
+      if (Array.isArray(parsed)) rules = parsed as Rule[];
+    } catch {
       continue;
     }
-    const scored = cands.map((v) => ({ v, s: banditScore(v.id, v.weight) }));
+    if (!matchAudience(rules, traits)) continue;
+    const key = audienceKey(v.audience);
+    const id = v.selector + "\0" + key;
+    const exp = experiences.get(id) ?? { selector: v.selector, key, cands: [] };
+    exp.cands.push(v);
+    experiences.set(id, exp);
+  }
+
+  const bySelector = new Map<string, { selector: string; key: string; cands: Variant[] }[]>();
+  for (const exp of experiences.values()) {
+    bySelector.set(exp.selector, [...(bySelector.get(exp.selector) ?? []), exp]);
+  }
+
+  const holdoutPct = holdoutFor(body.site, defaultHoldoutPct()).pct;
+  const decisions: { selector: string; variantId: number | null; name: string; ops: unknown[]; control?: boolean; audienceKey: string }[] = [];
+  for (const [selector, exps] of bySelector) {
+    const chosenKey = pickExperience(body.visitorId, selector, exps.map((e) => e.key));
+    const chosen = exps.find((e) => e.key === chosenKey) ?? exps[0]!;
+    if (isHoldout(body.visitorId, selector, chosen.key, holdoutPct)) {
+      decisions.push({ selector, variantId: null, name: "control", ops: [], control: true, audienceKey: chosen.key });
+      continue;
+    }
+    const scored = chosen.cands.map((v) => ({ v, s: banditScore(v.id, v.weight, chosen.key) }));
     scored.sort((a, b) => b.s - a.s);
     const winner = scored[0]!.v;
-    decisions.push({ selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops) });
+    decisions.push({ selector, variantId: winner.id, name: winner.name, ops: JSON.parse(winner.ops), audienceKey: chosen.key });
   }
 
   return c.json(canRead ? { decisions, traits, plan, usage } : { decisions, traits });
@@ -254,18 +270,26 @@ app.post("/api/decide", async (c) => {
 // visitor has already seen on the site. A later impression does not pick it up.
 // Unknown event types are dropped. Malformed JSON is a 400 via the app error handler.
 const insertEvent = db.prepare(
-  "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES (?, ?, ?, ?, ?, ?)"
+  "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts, audience_key) VALUES (?, ?, ?, ?, ?, ?, ?)"
 );
 const hasImp = db.prepare(
   `SELECT 1 FROM events WHERE site = ? AND visitor_id = ? AND selector = ?
    AND type = 'impression' AND (variant_id IS ? OR variant_id = ?) LIMIT 1`
+);
+const hasImpKeyed = db.prepare(
+  `SELECT 1 FROM events WHERE site = ? AND visitor_id = ? AND selector = ?
+   AND type = 'impression' AND (variant_id IS ? OR variant_id = ?) AND audience_key = ? LIMIT 1`
 );
 const insertOrder = db.prepare(
   "INSERT OR IGNORE INTO orders (site, order_id, visitor_id, currency, value_minor, ts) VALUES (?, ?, ?, ?, ?, ?)"
 );
 const insertCredit = db.prepare("INSERT OR IGNORE INTO order_credits (site, order_id, arm) VALUES (?, ?, ?)");
 const orderArms = db.prepare(
-  `SELECT DISTINCT CASE WHEN variant_id IS NULL THEN 'control' ELSE CAST(variant_id AS TEXT) END AS arm
+  `SELECT DISTINCT CASE
+     WHEN variant_id IS NULL AND audience_key IS NOT NULL THEN 'control:' || audience_key
+     WHEN variant_id IS NULL THEN 'control'
+     ELSE CAST(variant_id AS TEXT)
+   END AS arm
    FROM events WHERE site = ? AND visitor_id = ? AND type = 'impression'`
 );
 
@@ -273,7 +297,7 @@ app.post("/api/events", async (c) => {
   const body = await c.req.json<{
     site: string;
     visitorId: string;
-    events: { variantId?: number | null; selector?: string; type?: string; orderId?: unknown; value?: unknown; currency?: unknown }[];
+    events: { variantId?: number | null; selector?: string; type?: string; audienceKey?: unknown; orderId?: unknown; value?: unknown; currency?: unknown }[];
   }>();
   if (!body.site || !body.visitorId || !Array.isArray(body.events)) return c.json({ error: "bad payload" }, 400);
   let recorded = 0;
@@ -298,14 +322,34 @@ app.post("/api/events", async (c) => {
           duplicates++;
           return;
         }
-        for (const a of arms) insertCredit.run(body.site, parsed.order.orderId, a.arm);
+        const credited = new Set<string>();
+        for (const a of arms) {
+          if (credited.has(a.arm)) continue;
+          credited.add(a.arm);
+          insertCredit.run(body.site, parsed.order.orderId, a.arm);
+          // Pooled stats still read arm "control". An audience-specific control
+          // credit is extra, so the same order shows in that audience and in the pool.
+          if (a.arm.startsWith("control:") && !credited.has("control")) {
+            credited.add("control");
+            insertCredit.run(body.site, parsed.order.orderId, "control");
+          }
+        }
         recorded++;
         return;
       }
       if ((e.type !== "impression" && e.type !== "conversion") || typeof e.selector !== "string") return;
       const variantId = e.variantId ?? null;
-      if (e.type === "conversion" && !hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) return;
-      insertEvent.run(body.site, body.visitorId, variantId, e.selector, e.type, Date.now());
+      const rawKey = typeof e.audienceKey === "string" && e.audienceKey.length <= 500 ? e.audienceKey : null;
+      if (e.type === "conversion") {
+        const keyed = rawKey ? hasImpKeyed.get(body.site, body.visitorId, e.selector, variantId, variantId, rawKey) : null;
+        if (keyed) insertEvent.run(body.site, body.visitorId, variantId, e.selector, e.type, Date.now(), rawKey);
+        else if (hasImp.get(body.site, body.visitorId, e.selector, variantId, variantId)) {
+          insertEvent.run(body.site, body.visitorId, variantId, e.selector, e.type, Date.now(), null);
+        } else return;
+        recorded++;
+        return;
+      }
+      insertEvent.run(body.site, body.visitorId, variantId, e.selector, e.type, Date.now(), rawKey);
       recorded++;
     });
   });
@@ -375,19 +419,8 @@ app.post("/api/sites/:site/plan", async (c) => {
 });
 
 // ---------- stats ----------
-// Wilson score interval (95%) so rates come with honest uncertainty.
-function wilson(conv: number, imp: number): [number, number] | null {
-  if (imp === 0) return null;
-  const z = 1.96, p = conv / imp;
-  const denom = 1 + (z * z) / imp;
-  const center = (p + (z * z) / (2 * imp)) / denom;
-  const spread = (z * Math.sqrt((p * (1 - p) + (z * z) / (4 * imp)) / imp)) / denom;
-  return [Math.max(0, center - spread), Math.min(1, center + spread)];
-}
-
-app.get("/api/stats", async (c) => {
-  const site = c.req.query("site") ?? "demo";
-  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
+function statsBody(site: string) {
+  const holdout = holdoutFor(site, defaultHoldoutPct());
   const rows = db
     .prepare(
       `SELECT v.id, v.name, v.selector, v.active, v.starts_at, v.ends_at,
@@ -449,7 +482,7 @@ app.get("/api/stats", async (c) => {
   }
 
   const { plan } = sitePlan(site);
-  return c.json({
+  return {
     variants: withCI,
     control: {
       ...control,
@@ -457,11 +490,92 @@ app.get("/api/stats", async (c) => {
       ci95: wilson(control.conversions, control.impressions),
       ...armOrders(null),
     },
-    holdoutPct: HOLDOUT_PCT,
+    holdoutPct: holdout.pct,
+    holdoutPctSource: holdout.source,
+    experiences: buildExperiences(site, holdout.pct),
     plan,
     usage: usageFor(site),
     segments,
-  });
+  };
+}
+
+app.get("/api/stats", async (c) => {
+  const site = c.req.query("site") ?? "demo";
+  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
+  return c.json(statsBody(site));
+});
+
+function credentialPresent(c: AuthReq): boolean {
+  return Boolean(requestToken(c)) || Boolean(getCookie(c as never)[SESSION_COOKIE]);
+}
+
+// Lift report and the per-site holdout are operator settings: admin token or an
+// owner session. A demo token, editor, or viewer is signed in and still refused.
+async function ownerOrAdmin(c: AuthReq): Promise<true | 401 | 403> {
+  if (await fullAdmin(c)) return true;
+  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
+  if (email && accountRole(email)) return 403;
+  const tok = requestToken(c);
+  if (tok && (tok === DEMO_TOKEN || Object.hasOwn(READONLY_TOKENS, tok))) return 403;
+  if (credentialPresent(c)) return 401;
+  return 401;
+}
+
+app.post("/api/sites/:site/holdout", async (c) => {
+  const gate = await ownerOrAdmin(c);
+  if (gate !== true) return c.json({ error: gate === 403 ? "forbidden" : "unauthorized" }, gate);
+  const site = c.req.param("site");
+  if (!SITE_RE.test(site)) return c.json({ error: "invalid site" }, 400);
+  const body = await c.req.json<{ holdoutPct?: unknown }>().catch(() => null);
+  if (!body || !("holdoutPct" in body)) return c.json({ error: "holdoutPct required" }, 400);
+  const raw = body.holdoutPct;
+  if (raw !== null && (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > 100)) {
+    return c.json({ error: "holdoutPct must be an integer from 0 to 100, or null" }, 400);
+  }
+  const saved = saveHoldout(site, raw);
+  if (!saved.ok) return c.json({ error: "site_cap", cap: saved.cap }, 402);
+  const holdout = holdoutFor(site, defaultHoldoutPct());
+  return c.json({ ok: true, site, holdoutPct: holdout.pct, holdoutPctSource: holdout.source });
+});
+
+app.get("/api/sites/:site/lift-report", async (c) => {
+  const gate = await ownerOrAdmin(c);
+  if (gate !== true) return c.json({ error: gate === 403 ? "forbidden" : "unauthorized" }, gate);
+  const site = c.req.param("site");
+  if (!SITE_RE.test(site)) return c.json({ error: "invalid site" }, 400);
+  const format = c.req.query("format") ?? "json";
+  if (format !== "json" && format !== "html" && format !== "csv") return c.json({ error: "invalid format" }, 400);
+  const stats = statsBody(site);
+  const report: LiftReport = {
+    site,
+    generatedAt: new Date().toISOString(),
+    holdoutPct: stats.holdoutPct,
+    holdoutPctSource: stats.holdoutPctSource,
+    note: REPORT_NOTE,
+    experiences: stats.experiences,
+    pooled: {
+      variants: stats.variants.map((v) => ({
+        id: v.id,
+        name: v.name,
+        selector: v.selector,
+        impressions: v.impressions,
+        conversions: v.conversions,
+        orders: v.orders,
+      })),
+      control: {
+        impressions: stats.control.impressions,
+        conversions: stats.control.conversions,
+        orders: stats.control.orders,
+      },
+    },
+  };
+  c.header("cache-control", "no-store");
+  if (format === "html") return c.html(renderLiftHtml(report));
+  if (format === "csv") {
+    c.header("content-disposition", `attachment; filename="prism-lift-${site}.csv"`);
+    return c.text(renderLiftCsv(report), 200, { "content-type": "text/csv; charset=utf-8" });
+  }
+  return c.json(report);
 });
 
 // ---------- export / DSR ----------
@@ -733,7 +847,7 @@ app.get("/security", (c) =>
 <h2>Access control</h2>
 <p>Variant writes, the dashboard, exports, privacy endpoints, and catalog reads (<code>/api/sites</code>, <code>/api/variants</code>, <code>/api/stats</code>) require a Bearer token or a signed-in session. The demo token reaches only the <code>demo</code> site. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>
-<p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% Wilson confidence intervals. A deterministic holdout arm (default 10% per selector) preserves a control group for true incremental lift.</p>
+<p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% intervals. Each audience has its own holdout. The default is 10% of visitors, and a site can set its own percentage. Wide intervals are reported as not enough data yet.</p>
 <h2>Data flows</h2>
 <p>Browser to Prism API (HTTPS only, HSTS via the Fly edge) to SQLite on an encrypted Fly volume. No data leaves that path. Privacy endpoints are documented at <a href="/privacy">/privacy</a>.</p>`
     )

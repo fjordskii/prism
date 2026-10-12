@@ -19,12 +19,12 @@ export function monthStart(): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
-const getSite = db.prepare("SELECT plan FROM sites WHERE site = ?");
+const getSite = db.prepare("SELECT plan, holdout_pct FROM sites WHERE site = ?");
 const insSite = db.prepare("INSERT OR IGNORE INTO sites (site, plan, created_at) VALUES (?, ?, ?)");
 
 // Read-only: unknown sites report the deployment plan WITHOUT being registered.
-// Only registerSite() and the admin plan endpoint may insert — otherwise
-// /api/decide or /api/stats would bypass the site cap.
+// Only registerSite(), the plan endpoint, and the holdout endpoint may insert.
+// /api/decide and /api/stats must not, or they would bypass the site cap.
 export function sitePlan(site: string): { plan: string; def: PlanDef } {
   const row = getSite.get(site) as { plan: string } | null;
   const plan = row?.plan ?? DEPLOY_PLAN;
@@ -37,6 +37,26 @@ export function usageFor(site: string): { visitors: number; visitorCap: number |
   const { def } = sitePlan(site);
   const row = cntVisitors.get(site, monthStart()) as { n: number };
   return { visitors: row.n, visitorCap: def.visitors, overLimit: def.visitors !== null && row.n > def.visitors };
+}
+
+export function holdoutFor(site: string, fallback: number): { pct: number; source: "site" | "default" } {
+  const row = getSite.get(site) as { holdout_pct: number | null } | null;
+  if (row && row.holdout_pct != null && Number.isFinite(row.holdout_pct)) {
+    return { pct: Math.min(100, Math.max(0, Math.trunc(row.holdout_pct))), source: "site" };
+  }
+  return { pct: fallback, source: "default" };
+}
+
+const setHoldout = db.prepare("UPDATE sites SET holdout_pct = ? WHERE site = ?");
+
+// null clears the override and the deployment default applies again.
+export function saveHoldout(site: string, pct: number | null): { ok: true } | { ok: false; cap: number } {
+  if (!getSite.get(site)) {
+    const reg = registerSite(site);
+    if (!reg.ok) return reg;
+  }
+  setHoldout.run(pct, site);
+  return { ok: true };
 }
 
 // Register a never-seen site unless the deployment plan's site cap is reached.

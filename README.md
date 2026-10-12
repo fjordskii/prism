@@ -34,7 +34,7 @@ Environment:
 | `ADMIN_TOKEN` | unset (open) | Bearer token for variant writes, /admin, exports, and catalog reads |
 | `DEMO_TOKEN` | historical demo token, if unset | demo token (ask operator). Reaches only site `demo`. Rotation is a Fly secret (`fly secrets set DEMO_TOKEN=...`) |
 | `SITE_WRITE_KEY` | unset (open) | if set, snippet must send `data-key` to post traits/events |
-| `HOLDOUT_PCT` | `10` | % of eligible visitors held out as control per selector |
+| `HOLDOUT_PCT` | `10` | default % of visitors held out as control for each audience and selector. A site can override it. The default stays 10. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset (OAuth off) | Google OAuth client; enables `/auth/login` for browser access |
 | `GOOGLE_ALLOWED_EMAILS` | unset | comma list, `email` or `email:owner|viewer` (default `editor`); seeds the `accounts` table |
 | `SESSION_SECRET` | `ADMIN_TOKEN` | signs session cookies; rotate to revoke all sessions |
@@ -221,11 +221,13 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/events` | POST | write key | impressions, conversions, and orders (sendBeacon-safe) |
 | `/api/variants` | GET/POST | token or session for that site; POST writes need admin, editor, or the demo token on `demo` | list / create variants |
 | `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token; demo token only for `demo` variants | pause / remove |
-| `/api/stats?site=` | GET | token or session for that site | per-variant click rate, orders, RPV, and AOV, with 95% intervals, plus holdout control |
+| `/api/stats?site=` | GET | token or session for that site | per-variant click rate, orders, RPV, and AOV, with 95% intervals, pooled holdout, and a per-audience comparison |
 | `/api/sites` | GET | token or session; demo token lists `demo` only | site slugs the caller may see |
 | `/api/export?site=` | GET | token or session for that site | full tenant dump (variants, events, visitors) |
 | `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |
 | `/api/sites/:site/plan` | POST | admin token or owner session | set a site's plan (`{plan: "growth"}`) |
+| `/api/sites/:site/holdout` | POST | admin token or owner session | set that site's holdout percent (`{holdoutPct: 30}`) or clear it (`{holdoutPct: null}`) so the deployment default applies |
+| `/api/sites/:site/lift-report` | GET | admin token or owner session | lift report for that site only. `format` is `json` (default), `html` (printable page), or `csv` |
 | `/api/pilot/billing-status` | GET | admin token or owner session | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
 | `/api/growth` | POST | — | count a landing or pilot event (allowlisted name, 1024-byte cap, per-client rate limit) |
 | `/api/growth?from=&to=` | GET | admin token or owner session | daily counts per event, with UTM and referrer-host breakdown |
@@ -264,8 +266,9 @@ via the `READONLY_TOKENS` env var: those tokens reach GET routes, `/admin`,
 - Snippet runs post-paint; every DOM op is try/caught; API failure = default page (fail open).
 - Repeat views personalize from a 5-min localStorage cache: zero network latency.
 - SPA-aware: re-decides on pushState/popstate, re-applies after framework re-renders.
-- Selection = Thompson sampling over Beta(conversions+1, impressions−conversions+1),
-  with a deterministic holdout arm so incremental lift is always measurable.
+- Selection = Thompson sampling over Beta(conversions+1, impressions−conversions+1).
+  Each audience and selector has a deterministic holdout, so the comparison has its own control group.
+  The deployment default is 10%. A site can set its own percentage.
 
 ## License
 

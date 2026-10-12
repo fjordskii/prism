@@ -21,8 +21,8 @@ describe('regression: growth counts', { tags: ['regression'] }, () => {
 
     const campaign = `prism028_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     await app.open(`/?utm_source=e2e&utm_medium=test&utm_campaign=${campaign}`);
-    await screen.scrollUntilVisible(screen.getByRole('heading', 'Free until it proves itself'));
-    await screen.getByRole('link', 'Book a pilot').nth(0).tap();
+    await screen.scrollUntilVisible(screen.getByRole('heading', 'Start with a pilot'));
+    await screen.getByRole('link', 'Book a pilot').last().tap();
     await expect(screen.getByRole('heading', 'Try Prism on your Shopify store', { level: 1 })).toBeVisible();
 
     const today = new Date().toISOString().slice(0, 10);

@@ -74,8 +74,10 @@
 
   // ---- events ----
   var pending = [];
-  function track(variantId, selector, type) {
-    pending.push({ variantId: variantId, selector: selector, type: type });
+  function track(variantId, selector, type, audienceKey) {
+    var ev = { variantId: variantId, selector: selector, type: type };
+    if (audienceKey) ev.audienceKey = audienceKey;
+    pending.push(ev);
   }
   function headers(extra) {
     var h = { "content-type": "application/json" };
@@ -104,14 +106,20 @@
       var sel = t.getAttribute("data-prism-convert") || guessSelector(t);
       var target = null;
       try { target = document.querySelector(sel); } catch (err) {}
-      track(t.getAttribute("data-prism-variant") ? +t.getAttribute("data-prism-variant") : currentVariantFor(target || t), sel, "conversion");
+      var credited = target || t;
+      track(t.getAttribute("data-prism-variant") ? +t.getAttribute("data-prism-variant") : currentVariantFor(credited), sel, "conversion", audienceFor(credited) || controls[sel] || null);
       flush(false);
     }
   }, true);
 
-  var applied = []; // {selector, variantId, el, ops}
+  var applied = []; // {selector, variantId, audienceKey, el, ops}
+  var controls = {}; // selector -> audienceKey, for holdout conversions
   function currentVariantFor(el) {
     for (var i = 0; i < applied.length; i++) if (applied[i].el && applied[i].el.contains(el)) return applied[i].variantId;
+    return null;
+  }
+  function audienceFor(el) {
+    for (var i = 0; i < applied.length; i++) if (applied[i].el && applied[i].el.contains(el)) return applied[i].audienceKey || null;
     return null;
   }
   function guessSelector(el) {
@@ -123,14 +131,14 @@
 
   function applyDecisions(decisions) {
     decisions.forEach(function (d) {
-      if (d.control) { track(null, d.selector, "impression"); return; } // holdout: measure, don't touch
+      if (d.control) { controls[d.selector] = d.audienceKey || null; track(null, d.selector, "impression", d.audienceKey); return; } // holdout: measure, don't touch
       var el = document.querySelector(d.selector);
       if (!el) return;
       if (el.getAttribute("data-prism-variant") === String(d.variantId)) return; // already applied
       applyOps(el, d.ops);
       el.setAttribute("data-prism-variant", d.variantId);
-      applied.push({ selector: d.selector, variantId: d.variantId, el: el, ops: d.ops, fingerprint: el.innerHTML });
-      track(d.variantId, d.selector, "impression");
+      applied.push({ selector: d.selector, variantId: d.variantId, audienceKey: d.audienceKey || null, el: el, ops: d.ops, fingerprint: el.innerHTML });
+      track(d.variantId, d.selector, "impression", d.audienceKey);
     });
     flush(false);
   }
@@ -195,6 +203,7 @@
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     applied = [];
+    controls = {};
     // Cache survives navigation so repeat views stay instant; identify() still
     // invalidates it explicitly when traits change.
     decide();
@@ -223,7 +232,8 @@
       });
     },
     convert: function (selector) {
-      track(currentVariantFor(document.querySelector(selector) || document.body), selector, "conversion");
+      var el = document.querySelector(selector) || document.body;
+      track(currentVariantFor(el), selector, "conversion", audienceFor(el) || controls[selector] || null);
       flush(false);
     },
     redecide: function () { return decide(true); },
