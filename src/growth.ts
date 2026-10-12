@@ -172,11 +172,9 @@ export function growthReport(rows: GrowthCountRow[], from: string, to: string): 
 
 // Inline on the marketing pages. Failures stay inside this tag.
 export function growthClientScript(opts: { view: "landing_view" | "pilot_view"; trackClicks?: boolean; fillForm?: boolean }): string {
-  const clicks = opts.trackClicks ? "true" : "false";
   const fill = opts.fillForm ? "true" : "false";
   return `<script>
 (function () {
-  var trackClicks = ${clicks};
   var fillForm = ${fill};
   function send(event) {
     try {
@@ -210,18 +208,16 @@ export function growthClientScript(opts: { view: "landing_view" | "pilot_view"; 
     } catch (err) {}
   }
   send(${JSON.stringify(opts.view)});
-  if (trackClicks) {
-    document.addEventListener("click", function (ev) {
-      var node = ev.target;
-      if (!node || !node.closest) return;
-      var link = node.closest("#pricing a");
-      if (link) {
-        var href = link.getAttribute("href") || "";
-        if (href === "/pilot" || href.indexOf("/pilot?") === 0 || href.indexOf("/pilot#") === 0) send("pilot_cta");
-      }
-      if (node.closest("#copySnippet")) send("snippet_copy");
-    }, true);
-  }
+${opts.trackClicks ? `  document.addEventListener("click", function (ev) {
+    var node = ev.target;
+    if (!node || !node.closest) return;
+    var link = node.closest("#pricing a");
+    if (link) {
+      var href = link.getAttribute("href") || "";
+      if (href === "/pilot" || href.indexOf("/pilot?") === 0 || href.indexOf("/pilot#") === 0) send("pilot_cta");
+    }
+    if (node.closest("#copySnippet")) send("snippet_copy");
+  }, true);` : ""}
 })();
 </script>`;
 }
