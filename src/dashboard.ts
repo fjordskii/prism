@@ -121,6 +121,16 @@ export function dashboard(): string {
   #preview img { max-width: 100%; }
   #preview .btn, #preview a.btn { display: inline-block; background: var(--ink); color: #fff; padding: 10px 22px; border-radius: 4px; text-decoration: none; font-size: 13px; letter-spacing: .04em; }
 
+  .holdout-set { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 20px 0; }
+  .holdout-set label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .holdout-set input { width: 72px; }
+  #holdoutNote { font-size: 12px; color: var(--muted); }
+  .exp { padding: 4px 0 8px; }
+  .exp h3 { margin: 0; font-size: 14px; }
+  .exp .aud { color: var(--muted); font-weight: 500; }
+  #experiences { padding: 4px 8px 12px; }
+  #experiences .quiet { color: var(--muted); padding: 8px 12px; }
+
   @media (max-width: 720px) {
     #builder { grid-template-columns: 1fr; }
     .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
@@ -140,6 +150,9 @@ export function dashboard(): string {
     <a href="/demo/" target="_blank">Demo storefront ↗</a>
     <a id="archlink" href="/architecture">Architecture</a>
     <a id="export" href="#">Export JSON</a>
+    <a id="liftJson" href="#">Lift JSON</a>
+    <a id="liftHtml" href="#">Lift page</a>
+    <a id="liftCsv" href="#">Lift CSV</a>
   </nav>
 </header>
 
@@ -150,12 +163,26 @@ export function dashboard(): string {
     <h2>Performance</h2>
     <div class="meta"><span id="holdout"></span> <span id="planuse"></span> <span id="overlimit" style="color:var(--red);font-weight:600"></span></div>
   </div>
+  <div class="holdout-set">
+    <label for="holdoutPct">Holdout %</label>
+    <input id="holdoutPct" type="number" min="0" max="100" step="1" inputmode="numeric">
+    <button type="button" id="saveHoldout">Save</button>
+    <span id="holdoutNote"></span>
+  </div>
   <div id="lift"></div>
   <div class="tablewrap">
   <table id="vt"><thead><tr>
     <th>Name</th><th>Selector</th><th>Audience</th><th>Impressions</th><th>Conv.</th><th>Rate (95% CI)</th><th>Orders</th><th>Orders/visitor</th><th>Revenue</th><th>RPV</th><th>AOV</th><th>Status</th><th style="text-align:right">Actions</th>
   </tr></thead><tbody></tbody></table>
   </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Audience holdouts</h2>
+    <div class="meta">each audience compared with its own control</div>
+  </div>
+  <div id="experiences"></div>
 </section>
 
 <section class="card">
@@ -225,7 +252,13 @@ document.getElementById('addSite').addEventListener('click', () => {
   location.search = p.toString();
 });
 function exportHref() { return '/api/export?site=' + site + (token ? '&token=' + token : ''); }
+function liftHref(format) {
+  return '/api/sites/' + encodeURIComponent(site) + '/lift-report?format=' + format + (token ? '&token=' + encodeURIComponent(token) : '');
+}
 document.getElementById('export').href = exportHref();
+document.getElementById('liftJson').href = liftHref('json');
+document.getElementById('liftHtml').href = liftHref('html');
+document.getElementById('liftCsv').href = liftHref('csv');
 document.getElementById('archlink').href = '/architecture' + (token ? '?token=' + encodeURIComponent(token) : '');
 
 const TEMPLATES = [
@@ -454,7 +487,16 @@ async function load() {
   if (!vRes.ok || !sRes.ok) return;
   const [variants, stats] = await Promise.all([vRes.json(), sRes.json()]);
   const byId = Object.fromEntries(stats.variants.map(s => [s.id, s]));
-  document.getElementById('holdout').textContent = stats.holdoutPct + '% of traffic held out as control';
+  document.getElementById('holdout').textContent = stats.holdoutPct + '% held out as control';
+  const holdoutInput = document.getElementById('holdoutPct');
+  if (document.activeElement !== holdoutInput) {
+    holdoutInput.value = stats.holdoutPctSource === 'site' ? String(stats.holdoutPct) : '';
+    holdoutInput.placeholder = String(stats.holdoutPct);
+  }
+  document.getElementById('holdoutNote').textContent = stats.holdoutPctSource === 'site'
+    ? 'Set for this site.'
+    : 'Using the deployment default (' + stats.holdoutPct + '%). A 30-day pilot often uses 30.';
+  renderExperiences(stats);
   const planEl = document.getElementById('planuse'), warnEl = document.getElementById('overlimit');
   planEl.textContent = ''; warnEl.textContent = '';
   if (stats.plan) {
@@ -483,14 +525,6 @@ async function load() {
     }
   }
   const c = stats.control;
-  const liftDiv = document.getElementById('lift');
-  if (c.impressions > 0) {
-    const treated = stats.variants.reduce((a, s) => ({ i: a.i + s.impressions, c: a.c + s.conversions }), { i: 0, c: 0 });
-    const tr = treated.i ? treated.c / treated.i : 0, cr = c.conversions / c.impressions;
-    liftDiv.style.display = 'flex';
-    liftDiv.innerHTML = '<div class="lift-num">' + (cr ? ((tr/cr - 1) * 100).toFixed(0) : '∞') + '%</div>' +
-      '<div class="lift-body"><b>Incremental lift vs holdout</b><br>personalized ' + (100*tr).toFixed(1) + '% (' + treated.i.toLocaleString() + ' impressions) vs control ' + (100*cr).toFixed(1) + '% (' + c.impressions.toLocaleString() + ')</div>';
-  }
   const tb = document.querySelector('#vt tbody');
   tb.innerHTML = '';
   const maxImp = Math.max(1, ...stats.variants.map(s => s.impressions));
@@ -529,6 +563,45 @@ async function load() {
     tb.appendChild(tr);
   }
 }
+function renderExperiences(stats) {
+  const root = document.getElementById('experiences');
+  const list = stats.experiences || [];
+  if (!list.length) {
+    root.innerHTML = '<p class="quiet">No audiences yet. Create a variant and this site keeps a control group for it.</p>';
+    return;
+  }
+  root.innerHTML = '';
+  for (const exp of list) {
+    const wrap = document.createElement('div');
+    wrap.className = 'exp';
+    const rows = (exp.metrics || []).map(function (m) {
+      return '<tr><td>' + esc(m.label) + '</td><td>' + esc(m.treated) + '</td><td>' + esc(m.control) + '</td><td>' + esc(m.text) + '</td></tr>';
+    }).join('');
+    wrap.innerHTML =
+      '<div class="card-head"><h3>' + esc(exp.selector) + ' <span class="aud">' + esc(exp.audienceLabel) + '</span></h3></div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Metric</th><th>Personalized</th><th>Control</th><th>Readout</th></tr></thead><tbody>' +
+      rows + '</tbody></table></div>';
+    root.appendChild(wrap);
+  }
+}
+document.getElementById('saveHoldout').addEventListener('click', async () => {
+  const raw = document.getElementById('holdoutPct').value.trim();
+  let holdoutPct = null;
+  if (raw !== '') {
+    holdoutPct = Number(raw);
+    if (!Number.isInteger(holdoutPct) || holdoutPct < 0 || holdoutPct > 100) {
+      document.getElementById('holdoutNote').textContent = 'Enter a whole number from 0 to 100, or leave it blank for the default.';
+      return;
+    }
+  }
+  const r = await authFetch('/api/sites/' + encodeURIComponent(site) + '/holdout', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ holdoutPct: holdoutPct }),
+  });
+  document.getElementById('holdoutNote').textContent = r.ok ? 'Saved.' : 'Could not save the holdout.';
+  if (r.ok) load();
+});
 async function toggle(id) { await authFetch('/api/variants/' + id + '/toggle', { method: 'POST' }); load(); }
 async function del(id) { if (confirm('Delete variant?')) { await authFetch('/api/variants/' + id, { method: 'DELETE' }); load(); } }
 function authFetch(url, opts) {

@@ -42,7 +42,7 @@ sequenceDiagram
     else personalizing plan
         API->>DB: Load active variants for site
         API->>API: matchAudience(rules, traits)
-        API->>API: Deterministic holdout hash (10 pct control)
+        API->>API: Deterministic holdout hash per audience (site percent, default 10)
         API->>API: Thompson sample per candidate
         API-->>SN: decisions + plan + usage
     end
@@ -64,7 +64,7 @@ sequenceDiagram
 flowchart TB
     subgraph Owner["Owner surfaces"]
         L["/ landing: pricing, install, integration recipes"]
-        ADM["/admin: variants CRUD, stats + 95 pct CI, lift vs holdout, plan/usage meter, Segments"]
+        ADM["/admin: variants CRUD, stats + 95 pct CI, per-audience holdout, plan/usage meter, Segments"]
         AGENT["AI agent or scripts: same REST API"]
     end
     subgraph Edge["Prism service (Bun + Hono)"]
@@ -72,15 +72,15 @@ flowchart TB
         DECIDE["POST /api/decide: metering, plan gate, audience match, holdout, bandit"]
         EVENTS["POST /api/events: conversion and order require a prior impression"]
         CRUD["/api/variants CRUD + site-cap 402"]
-        STATS["GET /api/stats: click rate, orders, RPV, AOV, control, plan, usage, segments"]
+        STATS["GET /api/stats: click rate, orders, RPV, AOV, per-audience control, plan, usage, segments"]
         DSR["/api/export and /api/visitors/:id: GDPR export/erasure"]
     end
     subgraph Data["SQLite (WAL, embedded)"]
         V[("visitors: id, site, traits, last_seen")]
         VA[("variants: site, selector, ops, audience, weight, schedule, active")]
-        E[("events: visitor, variant?, type, ts")]
+        E[("events: visitor, variant?, audience?, type, ts")]
         O[("orders: order id, minor units, currency, credited arms")]
-        SI[("sites: site, plan, created_at")]
+        SI[("sites: site, plan, holdout_pct, created_at")]
     end
     subgraph Plans["Plan enforcement (src/plans.ts)"]
         P["shadow 10k/1 site/tracking-only; growth 100k/3; pro 500k/5; agency 1M/unlimited; selfhost unlimited"]
@@ -107,7 +107,7 @@ flowchart TD
     G -->|"shadow plan"| H["decisions empty, shadow true; owner watches Segments + traffic in /admin = run in shadow for a week"]
     G -->|"growth and up"| I["6. Open /admin?token=..., pick a template or write a variant: selector + audience rule + HTML + optional schedule"]
     H -->|"upgrade via POST /api/sites/:site/plan"| I
-    I --> J["7. Bandit + holdout run themselves; dashboard shows rate + 95 pct CI and incremental lift vs the 10 pct holdout"]
+    I --> J["7. Bandit and per-audience holdout run themselves; dashboard shows rate, 95 pct CI, and each audience against its own control"]
     J --> K{"8. Approaching visitor cap?"}
     K -->|"yes"| L["usage.overLimit: personalization pauses, tracking continues, red warning in dashboard; we contact you, nothing auto-bills"]
     K -->|"no"| J

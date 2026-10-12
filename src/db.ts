@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS events (
   variant_id INTEGER,                 -- null for control (no variant applied)
   selector TEXT NOT NULL,
   type TEXT NOT NULL,                 -- 'impression' | 'conversion'
-  ts INTEGER NOT NULL
+  ts INTEGER NOT NULL,
+  audience_key TEXT                   -- null on events recorded before per-audience attribution
 );
 CREATE INDEX IF NOT EXISTS idx_events_variant ON events(variant_id, type);
 CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id);
@@ -44,7 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id);
 CREATE TABLE IF NOT EXISTS sites (
   site TEXT PRIMARY KEY,
   plan TEXT NOT NULL,                   -- key into PLANS (src/plans.ts)
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  holdout_pct INTEGER                   -- null = use the HOLDOUT_PCT env default
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -77,10 +79,13 @@ export type Variant = {
   created_at: number;
 };
 
-// Existing DBs: add scheduling columns if missing (CREATE TABLE IF NOT EXISTS won't).
+// Existing DBs: add columns if missing (CREATE TABLE IF NOT EXISTS won't).
 for (const col of ["starts_at INTEGER", "ends_at INTEGER"]) {
   try { db.exec(`ALTER TABLE variants ADD COLUMN ${col}`); } catch { /* already there */ }
 }
+try { db.exec("ALTER TABLE events ADD COLUMN audience_key TEXT"); } catch { /* already there */ }
+try { db.exec("ALTER TABLE sites ADD COLUMN holdout_pct INTEGER"); } catch { /* already there */ }
+db.exec("CREATE INDEX IF NOT EXISTS idx_events_site_audience ON events(site, audience_key, selector, type)");
 
 // Orders are their own fact. One row per site and order id. Credits name the
 // arms the visitor had already seen when the order was accepted.

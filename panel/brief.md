@@ -37,7 +37,7 @@ per visitor: pre-approved content variants, rule-based audiences, a Bayesian ban
 - DSR endpoints are now token-gated (same auth as /admin): GET/DELETE
   /api/visitors/:id?site=…&token= plus the demo token (ask operator)
 - Supply chain: immutable versioned snippet at /snippet.v1.js (max-age=1y,
-immutable) with published SRI hash sha384-9tLikfoPMrm+wraop3h7uEydLqAyL6Hw2OPM7kwPnzJw78DA2JlYTg3AJqp1eMzH;
+immutable) with published SRI hash sha384-fPXpCwXF+ieNAMbOSd5vAwOr9AT/oFHDLWNQsGxEU9q5L9X+gqV0W7GqJGPaEo6+;
   or self-host the snippet from your own domain with data-host + data-cookie
   overrides (white-label: custom API origin + custom cookie name).
 - Source-available: github.com/fjordskii/prism (BSL 1.1 → Apache 2.0 in 2030);
