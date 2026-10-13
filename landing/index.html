@@ -336,7 +336,7 @@
     <div class="wrap">
       <ul class="hero-proof">
         <li><b>&lt;1 ms</b><span>decision on a warm cache</span></li>
-        <li><b>3 KB</b><span>gzipped, no dependencies</span></li>
+        <li><b>5 KB</b><span>gzipped, no dependencies</span></li>
         <li><b>Holdout</b><span>some visitors always see your default page</span></li>
         <li><b>Orders</b><span>tracked alongside clicks</span></li>
       </ul>
@@ -359,8 +359,8 @@
     <h2>Three steps. Your redesign stays untouched.</h2>
     <ol class="steps">
       <li>
-        <h3>Paste one line</h3>
-        <p>A deferred script tag, 3&nbsp;KB gzipped. Changes apply after first paint, and if anything fails your visitors see your normal page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
+        <h3>Paste the snippet</h3>
+        <p>A deferred script tag, 5&nbsp;KB gzipped, plus a few lines in the head that hide the sections you list, and if anything fails your visitors see your normal page. Works on Shopify, Webflow, Next.js, WordPress, and anything that serves HTML.</p>
       </li>
       <li>
         <h3>Approve the variants</h3>
@@ -378,13 +378,36 @@
     <h2>The whole integration</h2>
     <div class="snippet-wrap">
     <button id="copySnippet" class="snippet-copy">Copy</button>
-    <pre class="snippet" id="installSnippet"><span class="c">&lt;!-- in your &lt;head&gt;, once --&gt;</span>
-&lt;script defer src=<span class="s">"https://prism-personalize.fly.dev/snippet.js"</span> data-site=<span class="s">"yourstore"</span>&gt;&lt;/script&gt;
+    <pre class="snippet" id="installSnippet"><span class="c">&lt;!-- in your &lt;head&gt;. data-selectors lists every section Prism may change --&gt;</span>
+&lt;script defer src=<span class="s">"https://prism-personalize.fly.dev/snippet.js"</span> data-site=<span class="s">"yourstore"</span> data-selectors=<span class="s">"#hero,#grid"</span>&gt;&lt;/script&gt;
+&lt;script&gt;
+(function () {
+  var tag = document.querySelector(<span class="s">"script[data-selectors]"</span>);
+  if (!tag || document.getElementById(<span class="s">"prism-veil"</span>)) return;
+  var parts = tag.getAttribute(<span class="s">"data-selectors"</span>).split(<span class="s">","</span>), css = [], i, s;
+  for (i = 0; i < parts.length; i++) {
+    s = parts[i].replace(/^\s+|\s+$/g, <span class="s">""</span>);
+    if (!s || s.length &gt; 200 || /[{}&lt;&gt;\\]/.test(s)) continue;
+    css.push(s + <span class="s">"{visibility:hidden !important}"</span>);
+  }
+  if (!css.length) return;
+  var st = document.createElement(<span class="s">"style"</span>);
+  st.id = <span class="s">"prism-veil"</span>;
+  st.textContent = css.join(<span class="s">""</span>);
+  document.head.appendChild(st);
+  var ms = +tag.getAttribute(<span class="s">"data-timeout"</span>) || 800;
+  window.__prismVeilUntil = Date.now() + ms;
+  window.__prismVeilTimer = setTimeout(function () {
+    window.__prismVeilTimedOut = true;
+    if (st.parentNode) st.remove();
+  }, ms);
+})();
+&lt;/script&gt;
 
-<span class="c">&lt;!-- pinned + self-hosted (supply-chain control): --&gt;</span>
+<span class="c">&lt;!-- pinned + self-hosted (supply-chain control). Keep the inline script above. --&gt;</span>
 <span class="c">&lt;script defer src="/prism-snippet.v1.js" data-host="https://prism-personalize.fly.dev"</span>
-<span class="c">  integrity="sha384-fPXpCwXF+ieNAMbOSd5vAwOr9AT/oFHDLWNQsGxEU9q5L9X+gqV0W7GqJGPaEo6+"</span>
-<span class="c">  data-site="yourstore" data-cookie="mybrand_vid"&gt;&lt;/script&gt;</span>
+<span class="c">  integrity="sha384-qstdAUGj6wjXwDvG4QWJa1lW0+26YeVRG3fHfGKbv5TSD4lG+oUa6JUKsE3ETAHa"</span>
+<span class="c">  data-site="yourstore" data-selectors="#hero,#grid" data-cookie="mybrand_vid"&gt;&lt;/script&gt;</span>
 
 <span class="c">// tell Prism who this visitor is, from data you already have</span>
 <span class="a">prism</span>.identify({ orders: 3, lastOrderDays: 32, intent: <span class="s">"gift"</span> });
@@ -414,8 +437,8 @@
           <li>Swaps, inserts, reorders, or removes page sections per visitor segment</li>
           <li>Remembers visitors in a first-party cookie, no fingerprinting, and works with consent banners</li>
           <li>Sends more traffic to the variants that win</li>
-          <li>Applies changes after first paint, so it doesn't hold up your page load</li>
-          <li>A visitor's first pageview may show your default page for a moment. Later visits use the cached decision</li>
+          <li>Leaves the rest of the page alone. Only the sections you list wait for a decision</li>
+          <li>On a first visit those sections stay hidden until the decision arrives. If the wait runs long, your default page shows. Later visits use the saved decision</li>
           <li>Lets your AI agent author and manage variants through the same API you use</li>
         </ul>
       </div>
@@ -423,7 +446,7 @@
         <h3>What it never does</h3>
         <ul>
           <li><b>Never generates copy</b> or designs on the fly. Only your approved variants ship</li>
-          <li><b>Never blocks rendering</b>. Changes apply after first paint</li>
+          <li><b>Never holds the whole page</b>. Unlisted sections render right away, and listed ones fall back to your default after a short timeout</li>
           <li><b>Never requires</b> a redesign, a migration, or a CMS</li>
           <li><b>Never runs a model</b> in the request path. Decisions are rules plus statistics</li>
           <li><b>Never locks in your data</b>. Visitors, variants, and events are yours to export</li>
@@ -490,11 +513,11 @@ analytics.track(<span class="s">"Order Completed"</span>, () =&gt; <span class="
     <div style="margin-top:32px">
       <details open>
         <summary>Will it slow my site down?</summary>
-        <p>The script loads deferred and changes apply after first paint. On repeat visits the cached decision applies without waiting for the network.</p>
+        <p>The script loads with defer, so the rest of the page isn't waiting on it. On a first visit, the sections you list stay hidden for a moment while a decision comes back. If that request is slow, your default content shows. Later visits use the saved decision and skip the wait.</p>
       </details>
       <details open>
         <summary>Do visitors see a flash of the wrong content?</summary>
-        <p>A first-ever pageview can show the default briefly, since we never block paint. Later visits use the cached decision.</p>
+        <p>The sections you list stay hidden until the variant is in place. If Prism is slow or down, those sections show your default page after a short timeout and stay on it. The rest of the page paints on its own. Later visits use the saved decision.</p>
       </details>
       <details>
         <summary>Does it use AI to write my copy?</summary>
