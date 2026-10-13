@@ -20,14 +20,14 @@ sequenceDiagram
     autonumber
     participant V as Visitor browser
     participant S as Shop page (host site)
-    participant SN as snippet.js (9 KB, deferred)
+    participant SN as snippet.js (14 KB, deferred)
     participant LS as localStorage cache (5 min)
     participant API as Prism API (Hono)
     participant DB as SQLite
     participant PX as Shopify pixel
     V->>S: GET page
     S-->>V: HTML + script defer src=/snippet.js data-site=shop
-    Note over SN: Runs AFTER first paint, never blocks render
+    Note over SN: Hides listed selectors until the decision or a timeout, then shows the default. Does not block the rest of the page
     SN->>SN: Read/set first-party cookie (prism_vid, 400d)
     SN->>LS: readCache()
     alt cache under 5 min old

@@ -45,6 +45,66 @@
   }
   #toast { position: fixed; top: 16px; right: 16px; background: #2b2620; color: #fff; padding: 10px 18px; border-radius: 8px; font: 13px -apple-system, sans-serif; opacity: 0; transition: opacity .3s; z-index: 99; }
 </style>
+<script>
+(function () {
+  var q = location.search;
+  if (q.indexOf("flicker=") < 0) return;
+  window.__prismFlickerLog = [];
+  var until = performance.now() + 5000;
+  function snap() {
+    var h = document.querySelector("#hero h1");
+    var nav = document.querySelector("nav");
+    var text = h ? h.textContent.replace(/\s+/g, " ").trim() : "";
+    var visible = false;
+    if (h) {
+      var cs = getComputedStyle(h);
+      visible = cs.visibility !== "hidden" && parseFloat(cs.opacity) > 0.05;
+    }
+    var navVisible = false;
+    if (nav) {
+      var ns = getComputedStyle(nav);
+      navVisible = ns.visibility !== "hidden" && parseFloat(ns.opacity) > 0.05;
+    }
+    window.__prismFlickerLog.push({ t: Math.round(performance.now()), text: text, visible: visible, navVisible: navVisible });
+    if (performance.now() < until) requestAnimationFrame(snap);
+  }
+  requestAnimationFrame(snap);
+  if (q.indexOf("flicker=late") === -1 && q.indexOf("flicker=down") === -1) return;
+  var orig = window.fetch;
+  window.fetch = function (url) {
+    var args = arguments;
+    if (String(url).indexOf("/api/decide") === -1) return orig.apply(window, args);
+    if (q.indexOf("flicker=down") >= 0) return Promise.reject(new Error("down"));
+    return new Promise(function (resolve, reject) {
+      setTimeout(function () { orig.apply(window, args).then(resolve, reject); }, 2000);
+    });
+  };
+})();
+</script>
+<script defer src="/snippet.js" data-site="demo" data-selectors="#hero,#grid,#pdp-strip" data-timeout="800"></script>
+<script>
+(function () {
+  var tag = document.querySelector("script[data-selectors]");
+  if (!tag || document.getElementById("prism-veil")) return;
+  var parts = tag.getAttribute("data-selectors").split(","), css = [], i, s;
+  for (i = 0; i < parts.length; i++) {
+    s = parts[i].replace(/^\s+|\s+$/g, "");
+    if (!s || s.length > 200 || /[{}<>\\]/.test(s)) continue;
+    css.push(s + "{visibility:hidden !important}");
+  }
+  if (!css.length) return;
+  var st = document.createElement("style");
+  st.id = "prism-veil";
+  st.textContent = css.join("");
+  document.head.appendChild(st);
+  var ms = +tag.getAttribute("data-timeout") || 800;
+  window.__prismVeilUntil = Date.now() + ms;
+  window.__prismVeilTimer = setTimeout(function () {
+    window.__prismVeilTimedOut = true;
+    if (st.parentNode) st.remove();
+  }, ms);
+})();
+</script>
 </head>
 <body>
 <div class="demo-banner" style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;background:#111;color:#fff;font:12px/1.4 -apple-system,sans-serif;padding:8px 16px;border-radius:99px;opacity:.92;max-width:92vw;text-align:center">This is the <b>Prism demo store</b>. Pick a persona in the simulator panel and watch the page adapt. <a href="/" style="color:#8fb4f0">How Prism works</a></div>
@@ -59,6 +119,19 @@
   <p>Hand-poured candles made with clean ingredients and crafted for a calm, beautiful home.</p>
   <a class="btn" href="#grid" data-prism-convert="#hero">Explore collection</a>
 </div>
+<script>
+(function () {
+  if (location.search.indexOf("flicker=") < 0) return;
+  var h = document.querySelector("#hero h1");
+  var nav = document.querySelector("nav");
+  window.__prismAtHero = {
+    text: h ? h.textContent.replace(/\s+/g, " ").trim() : "",
+    heroHidden: !!(h && getComputedStyle(h).visibility === "hidden"),
+    navHidden: !!(nav && getComputedStyle(nav).visibility === "hidden"),
+    rootHidden: getComputedStyle(document.documentElement).visibility === "hidden" || getComputedStyle(document.body).visibility === "hidden",
+  };
+})();
+</script>
 
 <section>
   <h2>Shop by scent</h2>
@@ -83,7 +156,7 @@
   <h2>Like what you see?</h2>
   <p style="color:#6b6357;max-width:420px;margin:0 auto 20px">This store re-renders itself for every persona you picked. Your site can too.</p>
   <a class="btn" href="/#install">Install Prism on your site</a>
-  <p style="margin-top:10px;font-size:13px;color:#8a8175">One script tag. 3 KB gzipped.</p>
+  <p style="margin-top:10px;font-size:13px;color:#8a8175">A script tag and a few lines in the head. 5 KB gzipped.</p>
 </section>
 
 <div id="toast"></div>
@@ -97,7 +170,6 @@
   <button onclick="setPersona('gift')">Gift buyer</button>
   <button class="reset" onclick="wipe()">Wipe cookie + cache</button>
 </div>
-<script defer src="/snippet.js" data-site="demo"></script>
 <script>
 function toast(msg) {
   const t = document.getElementById('toast');

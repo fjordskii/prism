@@ -843,7 +843,7 @@ app.get("/security", (c) =>
     trustPage(
       "Security",
       `<h2>Serving model</h2>
-<p>The 9 KB snippet (3 KB gzipped) loads with <code>defer</code>, applies changes after first paint, and wraps every DOM operation in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
+<p>The 14 KB snippet (5 KB gzipped) loads with <code>defer</code>. It hides only the sections named in <code>data-selectors</code>, and only until a decision arrives or a short timeout passes. Every DOM operation is wrapped in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
 <h2>Access control</h2>
 <p>Variant writes, the dashboard, exports, privacy endpoints, and catalog reads (<code>/api/sites</code>, <code>/api/variants</code>, <code>/api/stats</code>) require a Bearer token or a signed-in session. The demo token reaches only the <code>demo</code> site. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>

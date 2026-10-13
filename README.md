@@ -172,8 +172,34 @@ Latest report: `docs/e2e-report.md`.
 ## Install the snippet on your site
 
 ```html
-<script defer src="https://YOUR_HOST/snippet.js" data-site="yourstore"></script>
+<!-- in <head>. data-selectors lists every section Prism may change -->
+<script defer src="https://YOUR_HOST/snippet.js" data-site="yourstore" data-selectors="#hero,#grid"></script>
+<script>
+(function () {
+  var tag = document.querySelector("script[data-selectors]");
+  if (!tag || document.getElementById("prism-veil")) return;
+  var parts = tag.getAttribute("data-selectors").split(","), css = [], i, s;
+  for (i = 0; i < parts.length; i++) {
+    s = parts[i].replace(/^\s+|\s+$/g, "");
+    if (!s || s.length > 200 || /[{}<>\\]/.test(s)) continue;
+    css.push(s + "{visibility:hidden !important}");
+  }
+  if (!css.length) return;
+  var st = document.createElement("style");
+  st.id = "prism-veil";
+  st.textContent = css.join("");
+  document.head.appendChild(st);
+  var ms = +tag.getAttribute("data-timeout") || 800;
+  window.__prismVeilUntil = Date.now() + ms;
+  window.__prismVeilTimer = setTimeout(function () {
+    window.__prismVeilTimedOut = true;
+    if (st.parentNode) st.remove();
+  }, ms);
+})();
+</script>
 ```
+
+`data-timeout` is milliseconds (default 800). The inline script hides only those selectors before first paint. The snippet removes the hide when it applies the decision. If the request is still pending when the timer fires, the default stays for that pageview and the late answer is cached for the next one. Omit `data-selectors` and the snippet keeps the old post-paint behavior.
 
 ```js
 prism.identify({ orders: 3, intent: "gift" });  // enrich the visitor profile
@@ -263,8 +289,8 @@ via the `READONLY_TOKENS` env var: those tokens reach GET routes, `/admin`,
 ## Design invariants
 
 - Variants are pre-approved content, never generated at request time.
-- Snippet runs post-paint; every DOM op is try/caught; API failure = default page (fail open).
-- Repeat views personalize from a 5-min localStorage cache: zero network latency.
+- Listed sections hide until the decision is applied. A timeout (800 ms, or `data-timeout`) shows the default page and leaves it there. API failure shows the default page (fail open). The rest of the page is not held. Every DOM op is try/caught.
+- Repeat views personalize from a 5-min localStorage cache, applied as soon as the script runs.
 - SPA-aware: re-decides on pushState/popstate, re-applies after framework re-renders.
 - Selection = Thompson sampling over Beta(conversions+1, impressions−conversions+1).
   Each audience and selector has a deterministic holdout, so the comparison has its own control group.

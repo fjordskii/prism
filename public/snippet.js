@@ -1,8 +1,10 @@
-/* Prism snippet — one line install:
-   <script defer src="https://YOUR_HOST/snippet.js" data-site="yoursite"></script>
-   Identity in a first-party cookie, decisions from /api/decide, DOM ops applied
-   post-paint, impressions + conversions beaconed back. SPA-aware: re-decides on
-   client-side navigation and re-applies variants if the framework re-renders. */
+/* Prism snippet. Install:
+   <script defer src="https://YOUR_HOST/snippet.js" data-site="yoursite" data-selectors="#hero"></script>
+   Plus a few inline lines in <head> (see the landing page) that hide those
+   selectors before first paint. The hide ends when the decision is applied, or
+   when data-timeout (default 800ms) fires. A late or failed response does not
+   swap the page after that: the visitor keeps the default. Identity in a
+   first-party cookie, impressions + conversions beaconed back. SPA-aware. */
 (function () {
   "use strict";
   var script = document.currentScript;
@@ -32,6 +34,75 @@
   }
   function writeCache(d) {
     try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), decisions: d })); } catch (e) {}
+  }
+
+  // Selectors the merchant listed. The inline head script hides these before
+  // paint; we hide them here too when that script is absent. Unsafe CSS is dropped.
+  function safeSelectors() {
+    var out = [], parts = (script.getAttribute("data-selectors") || "").split(",");
+    for (var i = 0; i < parts.length; i++) {
+      var s = parts[i].replace(/^\s+|\s+$/g, "");
+      if (!s || s.length > 200 || /[{}<>\\]/.test(s)) continue;
+      out.push(s);
+    }
+    return out;
+  }
+  function veiling() { return safeSelectors().length > 0; }
+  function timeoutMs() {
+    var n = +script.getAttribute("data-timeout");
+    return n > 0 ? n : 800;
+  }
+  var cycle = 0;
+  function liftVeil() {
+    clearTimeout(window.__prismVeilTimer);
+    window.__prismVeilTimer = null;
+    var st = document.getElementById("prism-veil");
+    if (st) st.remove();
+  }
+  function showVeil() {
+    var sels = safeSelectors();
+    if (!sels.length) return;
+    var st = document.getElementById("prism-veil");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "prism-veil";
+      (document.head || document.documentElement).appendChild(st);
+    }
+    var css = "";
+    for (var i = 0; i < sels.length; i++) css += sels[i] + "{visibility:hidden !important}";
+    st.textContent = css;
+  }
+  function arm(my, ms) {
+    clearTimeout(window.__prismVeilTimer);
+    window.__prismVeilTimer = setTimeout(function () {
+      if (my !== cycle) return;
+      window.__prismVeilTimedOut = true;
+      var st = document.getElementById("prism-veil");
+      if (st) st.remove();
+    }, ms);
+  }
+  function beginWait() {
+    cycle += 1;
+    window.__prismVeilTimedOut = false;
+    showVeil();
+    var ms = timeoutMs();
+    window.__prismVeilUntil = Date.now() + ms;
+    arm(cycle, ms);
+    return cycle;
+  }
+  // The head script already started the clock. Keep its deadline.
+  function adoptWait() {
+    cycle += 1;
+    var my = cycle;
+    var until = window.__prismVeilUntil;
+    var left = typeof until === "number" ? until - Date.now() : timeoutMs();
+    if (!(left > 0)) {
+      window.__prismVeilTimedOut = true;
+      liftVeil();
+      return my;
+    }
+    arm(my, left);
+    return my;
   }
 
   // ---- DOM ops ----
@@ -168,12 +239,46 @@
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
+  // The visitor already saw the default. Record holdout impressions only.
+  // A treatment impression would claim we showed a variant we never painted.
+  function noteUnshown(decisions) {
+    if (!decisions) return;
+    for (var i = 0; i < decisions.length; i++) {
+      var d = decisions[i];
+      if (!d || !d.control) continue;
+      controls[d.selector] = d.audienceKey || null;
+      track(null, d.selector, "impression", d.audienceKey);
+    }
+    flush(false);
+  }
+
   // fresh: skip the cache and apply the server's answer. A truthy timestamp from
   // requestAnimationFrame must not count, so callers pass true explicitly.
+  // With data-selectors, listed sections stay hidden until this applies, or until
+  // the timeout reveals the default. After that reveal, this pageview does not swap.
   function decide(fresh) {
-    var cached = fresh ? null : readCache();
-    if (cached && Date.now() - cached.ts < 300000) applyDecisions(cached.decisions);
-    else cached = null;
+    var warm = null;
+    if (!fresh) {
+      var cached = readCache();
+      if (cached && Date.now() - cached.ts < 300000) warm = cached;
+    }
+
+    var my = cycle;
+    var skipPaint = false;
+    if (veiling()) {
+      if (window.__prismVeilTimedOut && !fresh) skipPaint = true;
+      else if (!warm) {
+        if (!fresh && document.getElementById("prism-veil")) {
+          my = adoptWait();
+          if (window.__prismVeilTimedOut) skipPaint = true;
+        } else my = beginWait();
+      }
+    }
+
+    if (warm && !skipPaint && !window.__prismVeilTimedOut) {
+      applyDecisions(warm.decisions);
+      liftVeil();
+    }
 
     return fetch(origin + "/api/decide", {
       method: "POST",
@@ -182,10 +287,22 @@
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        writeCache(res.decisions);
-        if (!cached) applyDecisions(res.decisions);
+        var decisions = res && Array.isArray(res.decisions) ? res.decisions : [];
+        // A newer decide() owns this pageview. Drop the stale body, cache included.
+        if (veiling() && my !== cycle) return;
+        writeCache(decisions);
+        if (skipPaint || window.__prismVeilTimedOut) {
+          noteUnshown(decisions);
+          return;
+        }
+        if (warm) return;
+        applyDecisions(decisions);
+        liftVeil();
       })
-      .catch(function () {}); // fail open: visitors see the default page
+      .catch(function () {
+        if (my !== cycle) return;
+        if (!warm) liftVeil(); // fail open: a dead API shows the default page
+      });
   }
 
   function decideAfterPaint() {
@@ -195,7 +312,8 @@
       document.addEventListener("DOMContentLoaded", function () { requestAnimationFrame(function () { decide(); }); });
     }
   }
-  decideAfterPaint();
+  if (veiling()) decide(false);
+  else decideAfterPaint();
 
   // SPA support: re-decide on client-side navigation (pushState / replaceState / popstate).
   var lastUrl = location.href;
