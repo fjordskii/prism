@@ -116,8 +116,8 @@ flowchart TD
 
 <h2>Open gaps in that journey</h2>
 <ol>
-  <li><b>No self-serve signup.</b> Provisioning is operator-run: plan via <code>POST /api/sites/:site/plan</code>, login via <code>GOOGLE_ALLOWED_EMAILS</code>. No checkout, no per-site account scoping.</li>
-  <li><b>Accounts are per-deployment, not per-site.</b> Google OAuth logs humans in (<code>/auth/login</code>); the <code>accounts</code> table maps email to <code>owner | editor | viewer</code> (viewer = the Agency tier's read-only seat). But any logged-in user sees every site on the deployment — Agency's per-client scoping is not enforced.</li>
+  <li><b>No self-serve signup.</b> Provisioning is operator-run: plan via <code>POST /api/sites/:site/plan</code>, membership via <code>GOOGLE_ALLOWED_EMAILS</code>. No checkout and no invite UI.</li>
+  <li><b>Accounts can be deployment-wide or limited to sites.</b> Google OAuth logs humans in (<code>/auth/login</code>). An account with no <code>account_sites</code> rows keeps <code>accounts.role</code> on every site. Any row limits that person to those sites, and <code>accounts.role</code> is ignored. Pilot stores are site-scoped. The wide grant is for the operators.</li>
   <li><b>Agent API is not plan-gated.</b> Any valid token can CRUD variants on any plan, though the pricing page lists agent API as Growth+.</li>
   <li><b>Annual prepay, price lock, SLA credits</b> are policy text in <code>/terms</code>; no billing system automates them.</li>
 </ol>

@@ -69,5 +69,7 @@ test("booting on a pre-change database adds pilot_inquiries without dropping exi
     events: 1,
     site: { plan: "growth" },
     account: { role: "owner" },
+    accountSites: { name: "account_sites" },
+    accountSiteRows: 0,
   });
 });

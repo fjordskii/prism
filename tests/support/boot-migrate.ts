@@ -7,5 +7,7 @@ const variants = (db.prepare("SELECT COUNT(*) AS n FROM variants").get() as { n:
 const events = (db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
 const site = db.prepare("SELECT plan FROM sites WHERE site = ?").get("demo");
 const account = db.prepare("SELECT role FROM accounts WHERE email = ?").get("owner@prism.test");
+const accountSites = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_sites'").get();
+const accountSiteRows = (db.prepare("SELECT COUNT(*) AS n FROM account_sites").get() as { n: number }).n;
 
-console.log(JSON.stringify({ visitor, table, inquiries, variants, events, site, account }));
+console.log(JSON.stringify({ visitor, table, inquiries, variants, events, site, account, accountSites, accountSiteRows }));
