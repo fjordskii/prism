@@ -1,9 +1,4 @@
-// Impression and conversion totals for decide and stats.
-//
-// events is the only application write. Triggers on events are the only writer
-// of arm_counts. A null audience_key stays its own arm and is added at read
-// time, because an audience created later must still see those rows. Null is
-// stored as a flag: this SQLite build cannot upsert a NULL primary-key column.
+// Null is stored as a flag: this SQLite build cannot upsert a NULL primary-key column.
 
 import type { Database, Statement } from "bun:sqlite";
 
@@ -244,7 +239,7 @@ export function installEventCounts(db: Database): void {
   }
 }
 
-export function banditTotals(db: Database, variantId: number, audienceKey: string | null): Totals {
+export function banditTotalsIncludingUnkeyed(db: Database, variantId: number, audienceKey: string | null): Totals {
   const stmt = prepare(db);
   const unkeyed = totalsOf(stmt.unkeyed.get(variantId) as { impressions: number; conversions: number });
   const keyed = totalsOf(stmt.keyed.get(variantId, audienceKey) as { impressions: number; conversions: number });

@@ -1,6 +1,6 @@
 // Thompson sampling over Beta(impressions-conversions+1... ) — classic Bernoulli bandit.
 // alpha = conversions + 1, beta = impressions - conversions + 1.
-import { banditTotals } from "./counts";
+import { banditTotalsIncludingUnkeyed } from "./counts";
 import { db } from "./db";
 
 function sampleBeta(alpha: number, beta: number): number {
@@ -33,6 +33,6 @@ function randn(): number {
 }
 
 export function banditScore(variantId: number, weight: number, audienceKey: string | null = null): number {
-  const totals = banditTotals(db, variantId, audienceKey);
+  const totals = banditTotalsIncludingUnkeyed(db, variantId, audienceKey);
   return sampleBeta(totals.conversions + weight, totals.impressions - totals.conversions + 1);
 }

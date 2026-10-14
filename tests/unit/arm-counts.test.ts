@@ -1,6 +1,3 @@
-// Impression and conversion totals stay aligned with the event log, and decide
-// does not rescan that log. Runs in a child process so the row volume stays off
-// the shared unit-test database.
 import { afterAll, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
@@ -26,7 +23,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
 
   const { db } = await import("../../src/db.ts");
   const { banditScore } = await import("../../src/bandit.ts");
-  const { banditTotals, experienceArms, installEventCounts, pooledTotals } = await import("../../src/counts.ts");
+  const { banditTotalsIncludingUnkeyed, experienceArms, installEventCounts, pooledTotals } = await import("../../src/counts.ts");
   const { default: app } = await import("../../src/server.ts");
 
   function post(path: string, body: unknown) {
@@ -91,22 +88,22 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(everyone?.control.impressions).toBe(1);
     expect(everyone?.control.conversions).toBe(0);
 
-    const scored = banditTotals(db, variantId, "[]");
+    const scored = banditTotalsIncludingUnkeyed(db, variantId, "[]");
     const fromLog = raw.get(variantId, "[]") as { impressions: number; conversions: number };
     expect(scored.impressions).toBe(Number(fromLog.impressions));
     expect(scored.conversions).toBe(Number(fromLog.conversions));
     expect(scored).toEqual({ impressions: 3, conversions: 2 });
-    expect(banditTotals(db, variantId, "gift")).toEqual({ impressions: 1, conversions: 0 });
+    expect(banditTotalsIncludingUnkeyed(db, variantId, "gift")).toEqual({ impressions: 1, conversions: 0 });
     expect(experienceArms(db, site).some((row) => row.audience_key === "" && row.variant_id === variantId)).toBe(false);
 
-    const before = banditTotals(db, variantId, "[]");
+    const before = banditTotalsIncludingUnkeyed(db, variantId, "[]");
     expect(() => db.transaction(() => {
       db.prepare(
         "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts, audience_key) VALUES (?, ?, ?, '#hero', 'impression', 1, '[]')",
       ).run(site, "alice", variantId);
       throw new Error("rollback");
     })()).toThrow("rollback");
-    expect(banditTotals(db, variantId, "[]")).toEqual(before);
+    expect(banditTotalsIncludingUnkeyed(db, variantId, "[]")).toEqual(before);
 
     const erased = await app.request(`http://127.0.0.1/api/visitors/alice?site=${site}`, {
       method: "DELETE",
@@ -122,8 +119,8 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     db.prepare(
       "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts, audience_key) VALUES (?, ?, ?, '#hero', 'impression', 1, '')",
     ).run(site, "bob", variantId);
-    expect(banditTotals(db, variantId, "")).toEqual({ impressions: 1, conversions: 0 });
-    expect(banditTotals(db, variantId, "[]").impressions).toBe(0);
+    expect(banditTotalsIncludingUnkeyed(db, variantId, "")).toEqual({ impressions: 1, conversions: 0 });
+    expect(banditTotalsIncludingUnkeyed(db, variantId, "[]").impressions).toBe(0);
     const emptyArm = experienceArms(db, site).find((row) => row.audience_key === "" && row.variant_id === variantId);
     expect(emptyArm?.impressions).toBe(1);
 
@@ -174,14 +171,14 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
       "INSERT INTO variants (id, site, name, selector, ops, audience, weight, active, created_at) VALUES (7, 'legacy', 'Hero', '#hero', '[]', '[]', 1, 1, 1)",
     ).run();
     installEventCounts(next);
-    expect(banditTotals(next, 7, "[]")).toEqual({ impressions: 2, conversions: 1 });
+    expect(banditTotalsIncludingUnkeyed(next, 7, "[]")).toEqual({ impressions: 2, conversions: 1 });
     expect(pooledTotals(next, "legacy").control).toEqual({ impressions: 1, conversions: 0 });
     expect(pooledTotals(next, "legacy").variants.get(7)).toEqual({ impressions: 2, conversions: 1 });
     const arms = experienceArms(next, "legacy");
     expect(arms.find((row) => row.variant_id === 7)?.impressions).toBe(1);
     expect(arms.find((row) => row.variant_id === null)?.impressions).toBe(1);
     installEventCounts(next);
-    expect(banditTotals(next, 7, "[]")).toEqual({ impressions: 2, conversions: 1 });
+    expect(banditTotalsIncludingUnkeyed(next, 7, "[]")).toEqual({ impressions: 2, conversions: 1 });
     next.close();
   });
 
@@ -205,7 +202,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
       }
     })();
 
-    const impressions = ids.reduce((sum, id) => sum + banditTotals(db, id, "[]").impressions, 0);
+    const impressions = ids.reduce((sum, id) => sum + banditTotalsIncludingUnkeyed(db, id, "[]").impressions, 0);
     expect(impressions).toBe(237_500);
 
     const decided = await app.request("http://127.0.0.1/api/decide", {
