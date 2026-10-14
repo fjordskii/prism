@@ -18,8 +18,6 @@ export type Role = "owner" | "editor" | "viewer";
 const SECRET = process.env.SESSION_SECRET ?? process.env.ADMIN_TOKEN ?? "prism-dev-secret";
 
 // ---------- accounts ----------
-// GOOGLE_ALLOWED_EMAILS is seeded in src/access.ts. Login only checks that the
-// email has a row. The role for a request is read there, not from this column.
 const getAccount = db.prepare("SELECT role FROM accounts WHERE email = ?");
 export function accountRole(email: string): Role | null {
   const row = getAccount.get(email.toLowerCase()) as { role: Role } | null;

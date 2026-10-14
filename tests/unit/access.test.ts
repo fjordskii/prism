@@ -1,5 +1,3 @@
-// Env grammar and the site-access status matrix. The server is not imported here.
-// Each case boots in a child process so this file does not pin DB_PATH for the suite.
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";

@@ -8,7 +8,6 @@ const ROLE_RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
 export type AllowEntry = {
   email: string;
   role: Role;
-  /** null is deployment-wide. A list is those grants only. */
   sites: readonly string[] | null;
 };
 
@@ -41,14 +40,12 @@ export function parseAllowlist(raw: string): AllowEntry[] {
     }
     const role = exactRole(rest.slice(0, at).trim()) ?? "editor";
     const sites = rest.slice(at + 1).split("|").map((site) => site.trim());
-    // A broken suffix is skipped. Saving it as a wide editor would grant every site.
     if (sites.length === 0 || sites.some((site) => !SITE_RE.test(site))) continue;
     out.push({ email, role, sites });
   }
   return out;
 }
 
-/** null means the secret reads every site. A bad suffix is omitted, not widened. */
 export function parseReadonlyTokens(raw: string): ReadonlyMap<string, readonly string[] | null> {
   const out = new Map<string, readonly string[] | null>();
   for (const entry of raw.split(",")) {
@@ -69,7 +66,6 @@ export function parseReadonlyTokens(raw: string): ReadonlyMap<string, readonly s
 }
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-// Historical default until the Fly secret DEMO_TOKEN is set.
 const DEMO_TOKEN = process.env.DEMO_TOKEN || "demo-panel-2026";
 const readonlyTokens = parseReadonlyTokens(process.env.READONLY_TOKENS ?? "");
 
@@ -110,7 +106,6 @@ function readAccount(email: string): AccountRecord {
     const role = exactRole(row.site_role ?? "");
     if (role && row.site) grants.set(row.site, role);
   }
-  // An empty map stays site-scoped so a bad stored role cannot fall back to accounts.role.
   return { kind: "sites", grants };
 }
 
@@ -318,8 +313,6 @@ function decide(access: Access, site: string, minRole: Role, miss: "deny" | "mis
     if (site === "demo" && roleAtLeast("editor", minRole)) {
       return { ok: true, scope: "demo", canRegisterSite: false };
     }
-    // Owner-floor demands stay closed on every site, including demo.
-    // An editor floor still lets the demo token write on demo.
     if (minRole === "owner") return { ok: false, status: 403, error: "forbidden" };
     return { ok: false, status: 401, error: "unauthorized" };
   }
@@ -368,7 +361,6 @@ export async function requireAdminToken(c: AccessCtx): Promise<DeployDecision> {
   return { ok: false, status: 401, error: "unauthorized" };
 }
 
-/** Pay-link bit. A deployment-wide owner cookie only. */
 export async function wideOwnerSession(c: AccessCtx): Promise<boolean> {
   const m = await materials(c);
   return m.session?.kind === "deployment" && m.session.role === "owner";

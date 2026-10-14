@@ -22,8 +22,6 @@ export function monthStart(): number {
 const getSite = db.prepare("SELECT plan, holdout_pct FROM sites WHERE site = ?");
 const insSite = db.prepare("INSERT OR IGNORE INTO sites (site, plan, created_at) VALUES (?, ?, ?)");
 
-// Unknown sites report the deployment plan without being registered.
-// applyCap and the plan endpoint are the only inserts.
 export function sitePlan(site: string): { plan: string; def: PlanDef } {
   const row = getSite.get(site) as { plan: string } | null;
   const plan = row?.plan ?? DEPLOY_PLAN;
@@ -49,7 +47,6 @@ export function holdoutFor(site: string, fallback: number): { pct: number; sourc
 const setHoldout = db.prepare("UPDATE sites SET holdout_pct = ? WHERE site = ?");
 
 // null clears the override and the deployment default applies again.
-// A missing row is not inserted here. applyCap is the only registration door.
 export function saveHoldout(site: string, pct: number | null): { ok: true } | { ok: false; error: "unregistered" } {
   if (!getSite.get(site)) return { ok: false, error: "unregistered" };
   setHoldout.run(pct, site);

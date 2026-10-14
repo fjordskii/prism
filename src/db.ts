@@ -126,7 +126,6 @@ CREATE TABLE IF NOT EXISTS growth_events (
 CREATE INDEX IF NOT EXISTS idx_growth_day ON growth_events(day, event);
 `);
 
-// Additive. Zero rows means the account stays deployment-wide. Any row scopes it.
 db.exec(`
 CREATE TABLE IF NOT EXISTS account_sites (
   email TEXT NOT NULL,

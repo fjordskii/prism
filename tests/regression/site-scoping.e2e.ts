@@ -186,7 +186,7 @@ async function call(url: string, path: string, opts: Cred & { method?: string; j
   });
   const text = await res.text();
   let body: unknown = text;
-  try { body = JSON.parse(text); } catch { /* html or csv */ }
+  try { body = JSON.parse(text); } catch { body = text; }
   return { status: res.status, body, text };
 }
 
@@ -293,7 +293,6 @@ async function startServer(
         };
       }
     } catch {
-      /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 100));
   }

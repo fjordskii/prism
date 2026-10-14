@@ -80,7 +80,6 @@ app.post("/api/identify", async (c) => {
 // + audience, so a visitor does not flip arms on later requests. HOLDOUT_PCT is
 // the deployment default. A site row can override it.
 // Metering: decide counts visitors even before first identify, so usage is honest.
-// Only a site that already has a row or a variant is metered, so a made-up name writes nothing.
 const insMeter = db.prepare("INSERT OR IGNORE INTO visitors (id, site, first_seen, last_seen, traits) VALUES (?,?,?,?,'{}')");
 const touchMeter = db.prepare("UPDATE visitors SET last_seen = ? WHERE id = ? AND site = ?");
 const knownSite = db.prepare("SELECT 1 FROM sites WHERE site = ? UNION ALL SELECT 1 FROM variants WHERE site = ? LIMIT 1");
@@ -333,7 +332,6 @@ app.delete("/api/variants/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-// Plan changes stay deployment-wide. A site-scoped owner cannot set one.
 const upsertPlan = db.prepare(
   "INSERT INTO sites (site, plan, created_at) VALUES (?, ?, ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan"
 );
@@ -535,7 +533,6 @@ app.get("/api/visitors/:id", async (c) => {
 });
 app.delete("/api/visitors/:id", async (c) => {
   const site = c.req.query("site") ?? "demo";
-  // Editor, not owner: the demo token may erase site demo and still gets 401 off demo.
   const gate = await requireSite(c, site, "editor");
   if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const id = c.req.param("id");
