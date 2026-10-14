@@ -805,7 +805,7 @@ app.get("/admin", async (c) => {
   const page = await openAdmin(c, c.req.query("site"));
   if (page.kind === "login") return c.redirect("/auth/login");
   if (page.kind === "unauthorized") return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
-  return c.html(dashboard());
+  return c.html(dashboard(page.boot));
 });
 app.get("/architecture", async (c) => {
   const gate = await requireDeployment(c);

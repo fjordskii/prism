@@ -227,6 +227,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
         expect(body).not.toContain("if (!canRead) return");
         expect(body).not.toContain("if (!gate.ok) return");
       }
+      if (gate.id === "admin") expect(body).toContain("dashboard(page.boot)");
     }
     expect(src.includes("registerSite")).toBe(false);
     expect(src.includes("function authorized")).toBe(false);
@@ -246,6 +247,22 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
         expect(body, `${method} ${path}`).not.toContain(helper);
       }
     }
+  });
+
+  test("a denied dashboard names no site and does not load it", async () => {
+    const { dashboard } = await import("../../src/dashboard.ts");
+    const denied = dashboard({ sites: ["sitea"], site: null, denied: true });
+    expect(denied).toContain("No access to this site.");
+    expect(denied).toContain("if (!boot.denied && site)");
+    expect(denied).not.toContain("loadSites");
+    const boot = denied.match(/<script type="application\/json" id="prism-boot">([\s\S]*?)<\/script>/);
+    expect(boot?.[1]).toBe('{"sites":["sitea"],"site":null,"denied":true}');
+    const open = dashboard({ sites: ["demo"], site: "demo", denied: false });
+    expect(open).not.toContain("No access to this site.");
+    const hostile = dashboard({ sites: ["<script>"], site: "<script>", denied: false });
+    const hostileBoot = hostile.match(/<script type="application\/json" id="prism-boot">([\s\S]*?)<\/script>/);
+    expect(hostileBoot?.[1]).toContain("\\u003c");
+    expect(hostileBoot?.[1]).not.toContain("<");
   });
 
   test("applyCap registers a site only when the caller may mint", async () => {
