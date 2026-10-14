@@ -6,6 +6,7 @@ import { serveStatic } from "hono/bun";
 import { db, matchAudience, type Variant, type Rule } from "./db";
 import { parseOrder, reportArm } from "./money";
 import { banditScore } from "./bandit";
+import { pooledTotals } from "./counts";
 import { dashboard } from "./dashboard";
 import { architecture } from "./architecture";
 import { PLANS, sitePlan, usageFor, registerSite, holdoutFor, saveHoldout } from "./plans";
@@ -157,10 +158,6 @@ app.post("/api/identify", async (c) => {
 // Each audience on a selector has its own holdout. The hash is visitor + selector
 // + audience, so a visitor does not flip arms on later requests. HOLDOUT_PCT is
 // the deployment default. A site row can override it.
-// The bandit read is still one indexed aggregate per candidate variant. The
-// audience predicate stays on that variant_id range. Decide does not scan the
-// events table.
-
 // Metering: decide counts visitors even before first identify, so usage is honest.
 // Only registered sites are metered (a sites row from registerSite / the plan
 // endpoint / seed, or existing variants), so made-up site names write nothing.
@@ -421,23 +418,18 @@ app.post("/api/sites/:site/plan", async (c) => {
 // ---------- stats ----------
 function statsBody(site: string) {
   const holdout = holdoutFor(site, defaultHoldoutPct());
-  const rows = db
+  const pooled = pooledTotals(db, site);
+  const variantRows = db
     .prepare(
-      `SELECT v.id, v.name, v.selector, v.active, v.starts_at, v.ends_at,
-              COALESCE(SUM(e.type='impression'), 0) AS impressions,
-              COALESCE(SUM(e.type='conversion'), 0) AS conversions
-       FROM variants v LEFT JOIN events e ON e.variant_id = v.id
-       WHERE v.site = ? GROUP BY v.id ORDER BY v.id`
+      `SELECT id, name, selector, active, starts_at, ends_at
+       FROM variants WHERE site = ? ORDER BY id`
     )
-    .all(site) as { id: number; name: string; selector: string; active: number; starts_at: number | null; ends_at: number | null; impressions: number; conversions: number }[];
-
-  const control = db
-    .prepare(
-      `SELECT COALESCE(SUM(type='impression'),0) AS impressions,
-              COALESCE(SUM(type='conversion'),0) AS conversions
-       FROM events WHERE site = ? AND variant_id IS NULL`
-    )
-    .get(site) as { impressions: number; conversions: number };
+    .all(site) as { id: number; name: string; selector: string; active: number; starts_at: number | null; ends_at: number | null }[];
+  const rows = variantRows.map((row) => {
+    const totals = pooled.variants.get(row.id) ?? { impressions: 0, conversions: 0 };
+    return { ...row, impressions: totals.impressions, conversions: totals.conversions };
+  });
+  const control = pooled.control;
 
   const exposedVisitors = db.prepare(
     "SELECT DISTINCT visitor_id FROM events WHERE site = ? AND type = 'impression' AND variant_id IS ?"
