@@ -190,17 +190,29 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
       expect(created.status).toBe(201);
       ids.push((await created.json()).id as number);
     }
-    const insert = db.prepare(
-      "INSERT INTO events (site, visitor_id, variant_id, selector, type, ts, audience_key) VALUES ('fast', 'crowd', ?, '#hero', ?, 1, ?)",
-    );
-    const n = 250_000;
-    db.transaction(() => {
-      for (let i = 0; i < n; i++) {
-        const type = i % 20 === 0 ? "conversion" : "impression";
-        const audience = i % 2 === 0 ? null : "[]";
-        insert.run(ids[i % 5]!, type, audience);
-      }
-    })();
+    db.exec("DROP TRIGGER IF EXISTS events_count_insert");
+    db.exec("DROP TRIGGER IF EXISTS events_count_delete");
+    db.exec("DROP TRIGGER IF EXISTS events_count_no_update");
+    const series = (n: number) => Array.from({ length: n }, (_, i) => `(${i})`).join(",");
+    db.prepare(`
+      WITH
+        a(n) AS (VALUES ${series(50)}),
+        b(n) AS (VALUES ${series(50)}),
+        c(n) AS (VALUES ${series(100)}),
+        seq(i) AS (SELECT a.n + 50 * b.n + 2500 * c.n FROM a, b, c)
+      INSERT INTO events (site, visitor_id, variant_id, selector, type, ts, audience_key)
+      SELECT
+        'fast',
+        'crowd',
+        CASE i % 5 WHEN 0 THEN ?1 WHEN 1 THEN ?2 WHEN 2 THEN ?3 WHEN 3 THEN ?4 ELSE ?5 END,
+        '#hero',
+        CASE WHEN i % 20 = 0 THEN 'conversion' ELSE 'impression' END,
+        1,
+        CASE WHEN i % 2 = 0 THEN NULL ELSE '[]' END
+      FROM seq
+    `).run(ids[0], ids[1], ids[2], ids[3], ids[4]);
+    db.exec("DELETE FROM counts_meta");
+    installEventCounts(db);
 
     const impressions = ids.reduce((sum, id) => sum + banditTotalsIncludingUnkeyed(db, id, "[]").impressions, 0);
     expect(impressions).toBe(237_500);
