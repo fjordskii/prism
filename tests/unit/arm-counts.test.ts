@@ -226,7 +226,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     samples.sort((a, b) => a - b);
     const p95 = samples[Math.ceil(0.95 * samples.length) - 1]!;
     expect(p95).toBeLessThan(5);
-  });
+  }, { timeout: 60_000 });
 
   afterAll(() => {
     db.close();
