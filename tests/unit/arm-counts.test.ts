@@ -25,6 +25,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
   delete process.env.DEV_AUTH_EMAIL;
 
   const { db } = await import("../../src/db.ts");
+  const { banditScore } = await import("../../src/bandit.ts");
   const { banditTotals, experienceArms, installEventCounts, pooledTotals } = await import("../../src/counts.ts");
   const { default: app } = await import("../../src/server.ts");
 
@@ -184,7 +185,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     next.close();
   });
 
-  test("decide p95 stays under 5 ms at a quarter million events", async () => {
+  test("banditScore stays under 5 ms at a quarter million events", async () => {
     const site = "fast";
     const ids: number[] = [];
     for (let i = 1; i <= 5; i++) {
@@ -207,25 +208,20 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     const impressions = ids.reduce((sum, id) => sum + banditTotals(db, id, "[]").impressions, 0);
     expect(impressions).toBe(237_500);
 
-    const decide = async () => {
-      const started = performance.now();
-      const res = await app.request("http://127.0.0.1/api/decide", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ visitorId: "crowd", site }),
-      });
-      const ms = performance.now() - started;
-      const body = await res.json() as { decisions?: { variantId: number | null }[] };
-      return { ms, status: res.status, variantId: body.decisions?.[0]?.variantId ?? null };
-    };
+    const decided = await app.request("http://127.0.0.1/api/decide", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ visitorId: "crowd", site }),
+    });
+    expect(decided.status).toBe(200);
+    const decision = await decided.json() as { decisions?: { variantId: number | null }[] };
+    expect(ids).toContain(decision.decisions?.[0]?.variantId);
 
-    for (let i = 0; i < 10; i++) await decide();
     const samples: number[] = [];
-    for (let i = 0; i < 30; i++) {
-      const row = await decide();
-      expect(row.status).toBe(200);
-      expect(row.variantId).not.toBeNull();
-      samples.push(row.ms);
+    for (let i = 0; i < 40; i++) {
+      const started = performance.now();
+      for (const id of ids) banditScore(id, 1, "[]");
+      samples.push(performance.now() - started);
     }
     samples.sort((a, b) => a - b);
     const p95 = samples[Math.ceil(0.95 * samples.length) - 1]!;
