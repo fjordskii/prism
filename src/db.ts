@@ -1,5 +1,6 @@
 // Prism — personalization engine. SQLite schema + db handle.
 import { Database } from "bun:sqlite";
+import { installEventCounts } from "./counts";
 
 export const db = new Database(process.env.DB_PATH ?? "prism.db");
 db.exec("PRAGMA journal_mode = WAL;");
@@ -124,6 +125,8 @@ CREATE TABLE IF NOT EXISTS growth_events (
 );
 CREATE INDEX IF NOT EXISTS idx_growth_day ON growth_events(day, event);
 `);
+
+installEventCounts(db);
 
 export type Op =
   | { op: "html"; html: string }

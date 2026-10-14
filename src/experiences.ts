@@ -1,5 +1,6 @@
 // Per-audience lift. Events with no audience_key stay out of these comparisons
 // and remain in the pooled stats.
+import { experienceArms } from "./counts";
 import { db } from "./db";
 import { audienceKey, audienceLabel, controlArm } from "./holdout";
 import {
@@ -50,7 +51,6 @@ export type ExperienceSnapshot = {
 };
 
 type VariantRow = { id: number; name: string; selector: string; audience: string };
-type CountRow = { variant_id: number | null; selector: string; audience_key: string; impressions: number; conversions: number };
 type VisitorRow = { variant_id: number | null; selector: string; audience_key: string; visitor_id: string };
 type OrderRow = { arm: string; order_id: string; visitor_id: string; currency: string; value_minor: number };
 type RecentRow = { selector: string; audience_key: string; n: number; first_ts: number };
@@ -164,14 +164,7 @@ export function buildExperiences(site: string, holdoutPct: number, now = Date.no
     groups.set(id, g);
   }
 
-  const counts = db.prepare(
-    `SELECT variant_id, selector, audience_key,
-            COALESCE(SUM(type='impression'), 0) AS impressions,
-            COALESCE(SUM(type='conversion'), 0) AS conversions
-     FROM events
-     WHERE site = ? AND audience_key IS NOT NULL
-     GROUP BY variant_id, selector, audience_key`,
-  ).all(site) as CountRow[];
+  const counts = experienceArms(db, site);
 
   const visitors = db.prepare(
     `SELECT DISTINCT variant_id, selector, audience_key, visitor_id

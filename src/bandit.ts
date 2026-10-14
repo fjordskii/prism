@@ -1,5 +1,6 @@
 // Thompson sampling over Beta(impressions-conversions+1... ) — classic Bernoulli bandit.
 // alpha = conversions + 1, beta = impressions - conversions + 1.
+import { banditTotals } from "./counts";
 import { db } from "./db";
 
 function sampleBeta(alpha: number, beta: number): number {
@@ -31,18 +32,7 @@ function randn(): number {
   return mag * Math.cos(2 * Math.PI * v);
 }
 
-// One indexed read per variant. Older events with no audience_key still count
-// for that variant. Events attributed to a different audience do not.
-const statsStmt = db.prepare(
-  `SELECT
-     SUM(type='impression') AS impressions,
-     SUM(type='conversion') AS conversions
-   FROM events WHERE variant_id = ? AND (audience_key IS NULL OR audience_key = ?)`
-);
-
 export function banditScore(variantId: number, weight: number, audienceKey: string | null = null): number {
-  const row = statsStmt.get(variantId, audienceKey) as { impressions: number | null; conversions: number | null };
-  const imp = row.impressions ?? 0;
-  const conv = row.conversions ?? 0;
-  return sampleBeta(conv + weight, imp - conv + 1);
+  const totals = banditTotals(db, variantId, audienceKey);
+  return sampleBeta(totals.conversions + weight, totals.impressions - totals.conversions + 1);
 }
