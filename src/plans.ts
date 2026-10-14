@@ -22,9 +22,8 @@ export function monthStart(): number {
 const getSite = db.prepare("SELECT plan, holdout_pct FROM sites WHERE site = ?");
 const insSite = db.prepare("INSERT OR IGNORE INTO sites (site, plan, created_at) VALUES (?, ?, ?)");
 
-// Read-only: unknown sites report the deployment plan WITHOUT being registered.
-// Only registerSite(), the plan endpoint, and the holdout endpoint may insert.
-// /api/decide and /api/stats must not, or they would bypass the site cap.
+// Unknown sites report the deployment plan without being registered.
+// applyCap and the plan endpoint are the only inserts.
 export function sitePlan(site: string): { plan: string; def: PlanDef } {
   const row = getSite.get(site) as { plan: string } | null;
   const plan = row?.plan ?? DEPLOY_PLAN;
@@ -50,17 +49,27 @@ export function holdoutFor(site: string, fallback: number): { pct: number; sourc
 const setHoldout = db.prepare("UPDATE sites SET holdout_pct = ? WHERE site = ?");
 
 // null clears the override and the deployment default applies again.
-export function saveHoldout(site: string, pct: number | null): { ok: true } | { ok: false; cap: number } {
-  if (!getSite.get(site)) {
-    const reg = registerSite(site);
-    if (!reg.ok) return reg;
-  }
+// A missing row is not inserted here. applyCap is the only registration door.
+export function saveHoldout(site: string, pct: number | null): { ok: true } | { ok: false; error: "unregistered" } {
+  if (!getSite.get(site)) return { ok: false, error: "unregistered" };
   setHoldout.run(pct, site);
   return { ok: true };
 }
 
-// Register a never-seen site unless the deployment plan's site cap is reached.
-export function registerSite(site: string): { ok: true } | { ok: false; cap: number } {
+export type CapResult =
+  | { ok: true }
+  | { ok: false; error: "forbidden" }
+  | { ok: false; error: "site_cap"; cap: number };
+
+export function applyCap(canRegisterSite: boolean, site: string): CapResult {
+  if (getSite.get(site)) return { ok: true };
+  if (!canRegisterSite) return { ok: false, error: "forbidden" };
+  const reg = registerSite(site);
+  if (!reg.ok) return { ok: false, error: "site_cap", cap: reg.cap };
+  return { ok: true };
+}
+
+function registerSite(site: string): { ok: true } | { ok: false; cap: number } {
   if (getSite.get(site)) return { ok: true };
   const cap = (PLANS[DEPLOY_PLAN] ?? PLANS.selfhost!).sites;
   if (cap !== null) {

@@ -69,6 +69,7 @@ export function parseReadonlyTokens(raw: string): ReadonlyMap<string, readonly s
 }
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+// Historical default until the Fly secret DEMO_TOKEN is set.
 const DEMO_TOKEN = process.env.DEMO_TOKEN || "demo-panel-2026";
 const readonlyTokens = parseReadonlyTokens(process.env.READONLY_TOKENS ?? "");
 
@@ -433,3 +434,5 @@ export const SITE_GATES = [
   { id: "membership.put", method: "PUT", path: "/api/account-sites", call: "requireAdminToken" },
   { id: "membership.delete", method: "DELETE", path: "/api/account-sites", call: "requireAdminToken" },
 ] as const;
+
+seedAccounts();

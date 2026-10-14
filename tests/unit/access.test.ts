@@ -2,7 +2,7 @@
 // Each case boots in a child process so this file does not pin DB_PATH for the suite.
 import { Database } from "bun:sqlite";
 import { beforeAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFileIsolated } from "../support/isolated";
@@ -153,6 +153,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
   let seedAccounts: typeof import("../../src/access.ts").seedAccounts;
   let upsertMembership: typeof import("../../src/access.ts").upsertMembership;
   let deleteMembership: typeof import("../../src/access.ts").deleteMembership;
+  let SITE_GATES: typeof import("../../src/access.ts").SITE_GATES;
   let makeSession: typeof import("../../src/auth.ts").makeSession;
   let db: typeof import("../../src/db.ts").db;
   const cookies: Record<string, string> = {};
@@ -169,7 +170,7 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     delete process.env.DEV_AUTH_EMAIL;
     ({
       requireSite, requireDeployment, requireAdminToken, wideOwnerSession, listVisibleSites, openAdmin,
-      parseAllowlist, parseReadonlyTokens, seedAccounts, upsertMembership, deleteMembership,
+      parseAllowlist, parseReadonlyTokens, seedAccounts, upsertMembership, deleteMembership, SITE_GATES,
     } = await import("../../src/access.ts"));
     ({ makeSession } = await import("../../src/auth.ts"));
     ({ db } = await import("../../src/db.ts"));
@@ -202,6 +203,63 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
   function as(email?: string, bearer?: string, token?: string) {
     return { req: headerCtx(email ? cookies[email] : undefined, bearer, token) };
   }
+
+  test("every gated route calls its helper", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/server.ts"), "utf8");
+    for (const gate of SITE_GATES) {
+      const body = handlerBody(src, gate.method, gate.path);
+      expect(body, gate.id).toContain(gate.call);
+      if ("minRole" in gate) expect(body, gate.id).toContain(`"${gate.minRole}"`);
+      if ("miss" in gate && gate.miss === "missing") expect(body, gate.id).toContain('"missing"');
+      else expect(body, gate.id).not.toContain('"missing"');
+      if ("then" in gate) {
+        let from = body.indexOf(gate.call);
+        for (const step of gate.then) {
+          const at = body.indexOf(step, from);
+          expect(at, `${gate.id} ${step}`).toBeGreaterThan(from);
+          from = at;
+        }
+      }
+      if (gate.call !== "requireSite") expect(body, gate.id).not.toContain("requireSite");
+      if ("denial" in gate && gate.denial === "attach") {
+        expect(body).toContain("const canRead = (await requireSite(");
+        expect(body).toContain("canRead ?");
+        expect(body).not.toContain("if (!canRead) return");
+        expect(body).not.toContain("if (!gate.ok) return");
+      }
+    }
+    expect(src.includes("registerSite")).toBe(false);
+    expect(src.includes("function authorized")).toBe(false);
+    expect(src.includes("authorizedForSite")).toBe(false);
+    expect(src.includes("fullAdmin")).toBe(false);
+    expect(src.includes("ownerOrAdmin")).toBe(false);
+    expect(src.includes('app.use("/api/variants')).toBe(false);
+    expect(src.includes('app.use("/admin"')).toBe(false);
+    for (const [method, path] of [
+      ["POST", "/api/identify"],
+      ["POST", "/api/events"],
+      ["POST", "/api/growth"],
+      ["POST", "/api/pilot/inquiry"],
+    ] as const) {
+      const body = handlerBody(src, method, path);
+      for (const helper of ["requireSite", "requireDeployment", "requireAdminToken", "listVisibleSites", "openAdmin"]) {
+        expect(body, `${method} ${path}`).not.toContain(helper);
+      }
+    }
+  });
+
+  test("applyCap registers a site only when the caller may mint", async () => {
+    const { applyCap, saveHoldout } = await import("../../src/plans.ts");
+    expect(saveHoldout("brand-new", 10)).toEqual({ ok: false, error: "unregistered" });
+    expect(db.prepare("SELECT site FROM sites WHERE site = ?").get("brand-new")).toEqual(null);
+    expect(applyCap(false, "brand-new")).toEqual({ ok: false, error: "forbidden" });
+    expect(db.prepare("SELECT site FROM sites WHERE site = ?").get("brand-new")).toEqual(null);
+    expect(applyCap(true, "brand-new")).toEqual({ ok: true });
+    expect(db.prepare("SELECT site FROM sites WHERE site = ?").get("brand-new")).toEqual({ site: "brand-new" });
+    expect(saveHoldout("brand-new", 30)).toEqual({ ok: true });
+    expect(db.prepare("SELECT holdout_pct FROM sites WHERE site = ?").get("brand-new")).toEqual({ holdout_pct: 30 });
+    expect(applyCap(false, "brand-new")).toEqual({ ok: true });
+  });
 
   test("allowlist grammar", () => {
     expect(parseAllowlist("ford@x.com:owner,ada@shop.com:owner@ada,ben@shop.com:editor@ada|ada-eu")).toEqual([
@@ -519,6 +577,25 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     const stay = { req: headerCtx(`prism_session=${await makeSession("stay@shop.test")}`) };
     expect(await requireSite(stay, "anywhere", "owner")).toEqual({ ok: true, scope: "deployment", canRegisterSite: true });
   });
+}
+
+function handlerBody(src: string, method: string, path: string): string {
+  const marker = `app.${method.toLowerCase()}("${path}"`;
+  let start = -1;
+  let from = 0;
+  while (from < src.length) {
+    const at = src.indexOf(marker, from);
+    if (at < 0) break;
+    const tail = src.slice(at + marker.length);
+    if (tail.startsWith(",") || tail.startsWith(")")) {
+      start = at;
+      break;
+    }
+    from = at + marker.length;
+  }
+  if (start < 0) throw new Error(`missing ${method} ${path}`);
+  const next = src.indexOf("\napp.", start + marker.length);
+  return src.slice(start, next === -1 ? src.length : next);
 }
 
 function headerCtx(cookie?: string, authorization?: string, token?: string) {
