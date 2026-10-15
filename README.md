@@ -65,7 +65,7 @@ Before the S3 secrets exist, the same POST returns HTTP 200.
 {"ok":true,"skipped":true,"reason":"missing S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"}
 ```
 
-A wrong bearer returns HTTP 401. A snapshot that ran and failed returns HTTP 500.
+A wrong bearer returns HTTP 401. A snapshot that ran and failed returns HTTP 500. Some S3 fields set and others missing is also HTTP 500, so the daily job goes red.
 
 Restore writes a new file. It does not replace the live database. The procedure is in [docs/backup-restore.md](docs/backup-restore.md).
 
@@ -76,7 +76,7 @@ fly ssh console -a prism-personalize -C \
 fly machine restart -a prism-personalize
 ```
 
-Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is `DB_PATH` or when the file name is `prism.db`.
+Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous`), including after symlink and hardlink resolution and a case-insensitive match. It also refuses a file named `prism.db`. A stray or corrupt `/data/prism.restore` is moved to `/data/prism.restore.rejected` and the server starts.
 
 The MinIO drill is `tests/drill/backup-restore.test.ts`. It is not part of `tests/unit`, so a MinIO failure does not block deploy.
 
@@ -85,8 +85,8 @@ This change does not create a bucket, set secrets, or deploy. Do these once, in 
 1. Create a private Tigris bucket on the free tier. Use endpoint `https://t3.storage.dev` and region `auto`. The bucket name is one DNS label.
 2. Create an access key that can list, put, get, and delete objects in that bucket only.
 3. Set Fly secrets on `prism-personalize` for `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION=auto`, `BACKUP_RETENTION_DAYS=14`, and a new random `BACKUP_TOKEN`.
-4. Set the GitHub secret `BACKUP_TOKEN` to that same token. Do not put the S3 keys in GitHub.
-5. Deploy is a later PR. Until these secrets exist, the route returns the skip receipt and uploads nothing.
+4. Deploy this build so `POST /internal/backup` exists on the app.
+5. Set the GitHub secret `BACKUP_TOKEN` to that same token only after that deploy. Do not put the S3 keys in GitHub. Until the Fly S3 secrets exist, the route returns the skip receipt and uploads nothing. If the GitHub secret is set before the route is live, the daily job gets HTTP 404 and fails.
 
 ## Auth model
 

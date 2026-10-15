@@ -19,7 +19,7 @@ You need `flyctl` logged in to the `prism-personalize` app. The S3 secrets must 
 
    The command prints one JSON object. Success includes `"integrity":"ok"` and a `counts` object with one number for each user table. If the command is killed before it finishes, `/data/prism.restore` is unchanged. Run the same command again.
 
-   `restore` refuses `--to` when that path is `DB_PATH` or when the file name is `prism.db`.
+   `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous`), including after symlink and hardlink resolution and a case-insensitive match. It also refuses a file named `prism.db`.
 
 3. Restart the machine.
 
@@ -29,6 +29,6 @@ You need `flyctl` logged in to the `prism-personalize` app. The S3 secrets must 
 
    The container command is `bun src/backup.ts adopt && bun run src/seed.ts && bun run src/server.ts`. `adopt` checks `/data/prism.restore`, moves the live file aside, and puts the restored file at `/data/prism.db`.
 
-If the restored file fails `PRAGMA integrity_check`, `adopt` exits 1 and does not replace the live file. The server does not start. Delete `/data/prism.restore`, or restore a different day, then restart.
+If `/data/prism.restore` is corrupt or is not a database, `adopt` moves it to `/data/prism.restore.rejected`, writes that path to stderr, and the server starts on the live file.
 
 There is no HTTP restore. `BACKUP_TOKEN` cannot write a file onto the volume.

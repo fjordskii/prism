@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,8 +68,11 @@ const DAILY_KEY = /^prism\/daily\/(\d{4}-\d{2}-\d{2})\.sqlite\.gz$/;
 const GZIP_CAP = 32 * 1024 * 1024;
 const BUSY_TIMEOUT_MS = 8000;
 const PREFIX = "prism/daily/";
+const LIVE_SIDECARS = ["-wal", "-shm", "-journal", ".previous"] as const;
 
-const inflight = new Map<string, Promise<Response>>();
+type SnapshotReceipt = { status: number; body: unknown };
+
+const inflight = new Map<string, Promise<SnapshotReceipt>>();
 
 function envValue(env: typeof process.env, name: string): string {
   const value = env[name];
@@ -102,6 +105,10 @@ function readConfig(env: typeof process.env): ConfigRead {
   if (invalid.length > 0) return { ok: false, kind: "invalid", error: invalid.join("; ") };
 
   const missing = STORAGE_FIELDS.filter((name) => envValue(env, name) === "");
+  const present = STORAGE_FIELDS.length - missing.length;
+  if (present > 0 && missing.length > 0) {
+    return { ok: false, kind: "invalid", error: `missing ${missing.join(", ")}` };
+  }
   if (missing.length > 0) return { ok: false, kind: "missing", reason: `missing ${missing.join(", ")}` };
 
   const retention = Number(retentionRaw === "" ? "14" : retentionRaw) as RetentionDays;
@@ -359,11 +366,46 @@ function mkdtemp(prefix: string): string {
   return mkdtempSync(prefix);
 }
 
+function canonicalPath(path: string): string {
+  const abs = resolve(path);
+  try {
+    return realpathSync(abs);
+  } catch {
+    try {
+      return join(realpathSync(dirname(abs)), basename(abs));
+    } catch {
+      return abs;
+    }
+  }
+}
+
+function foldPath(path: string): string {
+  return canonicalPath(path).normalize("NFC").toLowerCase();
+}
+
+function sameInode(left: string, right: string): boolean {
+  try {
+    const a = statSync(left);
+    const b = statSync(right);
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+
+function sameLiveFile(to: string, member: string): boolean {
+  if (sameInode(to, member)) return true;
+  return foldPath(to) === foldPath(member);
+}
+
 function refuseTarget(to: string, env: typeof process.env): string | undefined {
   if (to.trim() === "") return "restore requires --to";
   const dbPath = env.DB_PATH || "prism.db";
-  if (resolve(to) === resolve(dbPath)) return "refusing to write DB_PATH";
-  if (basename(to) === "prism.db") return "refusing to write prism.db";
+  if (sameLiveFile(to, dbPath)) return "refusing to write DB_PATH";
+  for (const suffix of LIVE_SIDECARS) {
+    if (sameLiveFile(to, `${dbPath}${suffix}`)) return "refusing to write a live database file";
+  }
+  if (basename(to).normalize("NFC").toLowerCase() === "prism.db") return "refusing to write prism.db";
   return undefined;
 }
 
@@ -456,18 +498,27 @@ function classifyAdopt(dbPath: string): AdoptClass {
   return { kind: "clear" };
 }
 
+function quarantinePending(pending: string): void {
+  let dest = `${pending}.rejected`;
+  if (statExists(dest)) dest = `${pending}.rejected.${Date.now()}`;
+  renameSync(pending, dest);
+  process.stderr.write(`adopt: moved stray restore aside to ${dest}\n`);
+}
+
+function rejectPending(pending: string, previous: string | null, live: string): AdoptResult {
+  if (previous !== null && isFile(previous) && !isFile(live)) renameSync(previous, live);
+  quarantinePending(pending);
+  return { ok: true, adopted: false };
+}
+
 function finishSwap(pending: string, previous: string, live: string): AdoptResult {
   let integrity: string;
   try {
     integrity = integrityOf(pending);
-  } catch (err) {
-    if (isFile(previous) && !isFile(live)) renameSync(previous, live);
-    return { ok: false, error: errorMessage(err) };
+  } catch {
+    return rejectPending(pending, previous, live);
   }
-  if (integrity !== "ok") {
-    if (isFile(previous) && !isFile(live)) renameSync(previous, live);
-    return { ok: false, error: `integrity_check returned ${integrity}` };
-  }
+  if (integrity !== "ok") return rejectPending(pending, previous, live);
   unlinkSidecars(live);
   renameSync(pending, live);
   if (isFile(previous)) unlinkSync(previous);
@@ -489,9 +540,9 @@ function adoptClassified(dbPath: string): AdoptResult {
       const previous = `${dbPath}.previous`;
       try {
         const integrity = integrityOf(state.pending);
-        if (integrity !== "ok") return { ok: false, error: `integrity_check returned ${integrity}` };
-      } catch (err) {
-        return { ok: false, error: errorMessage(err) };
+        if (integrity !== "ok") return rejectPending(state.pending, null, dbPath);
+      } catch {
+        return rejectPending(state.pending, null, dbPath);
       }
       if (isFile(previous)) return { ok: false, error: `${basename(previous)} already exists` };
       if (state.live !== null) renameSync(state.live, previous);
@@ -544,7 +595,7 @@ function childBody(stdout: string): unknown {
   return { ok: false, error: "snapshot process failed" };
 }
 
-async function runSnapshotChild(env: typeof process.env, day: string): Promise<Response> {
+async function runSnapshotChild(env: typeof process.env, day: string): Promise<SnapshotReceipt> {
   const script = fileURLToPath(import.meta.url);
   const child = Bun.spawn([process.execPath, script, "snapshot", "--day", day], {
     cwd: dirname(dirname(script)),
@@ -558,7 +609,7 @@ async function runSnapshotChild(env: typeof process.env, day: string): Promise<R
     child.exited,
     new Response(child.stderr).text(),
   ]);
-  return Response.json(childBody(stdout), { status: code === 0 ? 200 : 500 });
+  return { status: code === 0 ? 200 : 500, body: childBody(stdout) };
 }
 
 export function handleBackupRequest(req: Request, env: typeof process.env, now: Date): Promise<Response> {
@@ -570,15 +621,19 @@ export function handleBackupRequest(req: Request, env: typeof process.env, now: 
   }
   const day = utcDay(now);
   const key = `${PREFIX}${day}.sqlite.gz`;
-  const existing = inflight.get(key);
-  if (existing) return existing;
-  const run = runSnapshotChild(env, day)
-    .catch((err: unknown) => Response.json({ ok: false, error: errorMessage(err) }, { status: 500 }))
-    .finally(() => {
-      if (inflight.get(key) === run) inflight.delete(key);
-    });
-  inflight.set(key, run);
-  return run;
+  let work = inflight.get(key);
+  if (work === undefined) {
+    work = runSnapshotChild(env, day)
+      .catch((err: unknown): SnapshotReceipt => ({
+        status: 500,
+        body: { ok: false, error: errorMessage(err) },
+      }))
+      .finally(() => {
+        if (inflight.get(key) === work) inflight.delete(key);
+      });
+    inflight.set(key, work);
+  }
+  return work.then(({ status, body }) => Response.json(body, { status }));
 }
 
 function flag(argv: readonly string[], name: string): string | undefined {
