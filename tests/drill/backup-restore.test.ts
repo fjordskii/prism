@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,25 +71,33 @@ async function runCli(args: string[], env: Record<string, string>) {
   return { stdout, stderr, code };
 }
 
-function writeShop(path: string) {
-  const db = new Database(path);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec(`
-    CREATE TABLE visitors (id TEXT PRIMARY KEY, site TEXT NOT NULL);
-    CREATE TABLE variants (id INTEGER PRIMARY KEY, site TEXT NOT NULL, name TEXT NOT NULL);
-    CREATE TABLE events (id INTEGER PRIMARY KEY, site TEXT NOT NULL, visitor_id TEXT NOT NULL, type TEXT NOT NULL);
-    CREATE TABLE sites (site TEXT PRIMARY KEY, plan TEXT NOT NULL);
-    CREATE TABLE orders (site TEXT NOT NULL, order_id TEXT NOT NULL, PRIMARY KEY (site, order_id));
-    INSERT INTO visitors (id, site) VALUES ('v1', 'shop'), ('v2', 'shop');
-    INSERT INTO variants (id, site, name) VALUES (1, 'shop', 'Hero');
-    INSERT INTO events (id, site, visitor_id, type) VALUES
-      (1, 'shop', 'v1', 'impression'),
-      (2, 'shop', 'v1', 'conversion'),
-      (3, 'shop', 'v2', 'impression');
-    INSERT INTO sites (site, plan) VALUES ('shop', 'pilot');
-    INSERT INTO orders (site, order_id) VALUES ('shop', 'ord-1');
-  `);
-  db.close();
+async function writeShop(path: string) {
+  const script = `
+    process.env.DB_PATH = ${JSON.stringify(path)};
+    const { db } = await import("./src/db.ts");
+    const now = Date.now();
+    db.run("INSERT INTO visitors (id, site, first_seen, last_seen, visits) VALUES ('v1', 'shop', ?, ?, 1)", now, now);
+    db.run("INSERT INTO visitors (id, site, first_seen, last_seen, visits) VALUES ('v2', 'shop', ?, ?, 1)", now, now);
+    db.run("INSERT INTO variants (site, name, selector, ops, audience, created_at) VALUES ('shop', 'Hero', '#hero', '[]', '{}', ?)", now);
+    db.run("INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES ('shop', 'v1', 1, '#hero', 'impression', ?)", now);
+    db.run("INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES ('shop', 'v1', 1, '#hero', 'conversion', ?)", now);
+    db.run("INSERT INTO events (site, visitor_id, variant_id, selector, type, ts) VALUES ('shop', 'v2', 1, '#hero', 'impression', ?)", now);
+    db.run("INSERT INTO sites (site, plan, created_at) VALUES ('shop', 'growth', ?)", now);
+    db.run("INSERT INTO orders (site, order_id, visitor_id, currency, value_minor, ts) VALUES ('shop', 'ord-1', 'v1', 'USD', 100, ?)", now);
+    db.close();
+  `;
+  const proc = Bun.spawn([process.execPath, "-e", script], {
+    cwd: repo,
+    env: { ...process.env, DB_PATH: path },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) throw new Error(`writeShop failed\n${stderr}\n${stdout}`);
 }
 
 function addDays(day: string, delta: number): string {
@@ -124,7 +132,7 @@ test.serial(
     const dir = mkdtempSync(join(tmpdir(), "prism-drill-wal-"));
     const live = join(dir, "shop.sqlite");
     const restored = join(dir, "shop-restored.sqlite");
-    writeShop(live);
+    await writeShop(live);
     const env = childEnv(live);
     await emptyDaily(env);
 
@@ -148,12 +156,28 @@ test.serial(
 
     holder.kill();
     await holder.exited;
+    const liveBytes = readFileSync(live);
 
     const back = await runCli(["restore", "--date", "2026-06-15", "--to", restored], env);
     expect(back.code, back.stderr).toBe(0);
-    expect(back.stdout).toBe(
-      `{"ok":true,"key":"${key}","path":${JSON.stringify(restored)},"integrity":"ok","counts":{"events":3,"orders":1,"sites":1,"variants":1,"visitors":2}}\n`,
-    );
+    const body = JSON.parse(back.stdout) as {
+      ok: boolean;
+      key: string;
+      path: string;
+      integrity: string;
+      boot: string;
+      counts: Record<string, number>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.key).toBe(key);
+    expect(body.path).toBe(restored);
+    expect(body.integrity).toBe("ok");
+    expect(body.boot).toBe("ok");
+    expect(body.counts.visitors).toBe(2);
+    expect(body.counts.variants).toBe(1);
+    expect(body.counts.events).toBe(3);
+    expect(body.counts.sites).toBe(1);
+    expect(body.counts.orders).toBe(1);
 
     const db = new Database(restored, { readonly: true });
     expect(db.query("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
@@ -164,11 +188,12 @@ test.serial(
     expect(db.query("SELECT COUNT(*) AS n FROM orders").get()).toEqual({ n: 1 });
     db.close();
 
+    expect(readFileSync(live)).toEqual(liveBytes);
     const source = new Database(live, { readonly: true });
     expect(source.query("SELECT COUNT(*) AS n FROM visitors").get()).toEqual({ n: 2 });
     source.close();
   },
-  { timeout: 30_000 },
+  { timeout: 90_000 },
 );
 
 test.serial(
@@ -176,7 +201,7 @@ test.serial(
   async () => {
     const dir = mkdtempSync(join(tmpdir(), "prism-drill-prune-"));
     const live = join(dir, "ledger.sqlite");
-    writeShop(live);
+    await writeShop(live);
     const env = childEnv(live);
     await emptyDaily(env);
 
@@ -231,7 +256,7 @@ test.serial(
   async () => {
     const dir = mkdtempSync(join(tmpdir(), "prism-drill-future-"));
     const live = join(dir, "shop.sqlite");
-    writeShop(live);
+    await writeShop(live);
     const env = childEnv(live);
     await emptyDaily(env);
 

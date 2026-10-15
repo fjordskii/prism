@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleBackupRequest } from "../../src/backup";
+import { handleBackupRequest, proveStartup } from "../../src/backup";
 
 const repo = join(import.meta.dir, "../..");
 
@@ -231,6 +231,13 @@ test("restore refuses live sidecars, a hardlink, a symlink, and PRISM.DB", async
   expect(sym.stdout).toBe('{"ok":false,"error":"refusing to write DB_PATH"}\n');
   expect(readFileSync(live, "utf8")).toBe("keep");
 
+  const generation = `${live}.previous.1234567890`;
+  writeFileSync(generation, "generation");
+  const gen = await runCli(["restore", "--to", generation], env);
+  expect(gen.code, gen.stderr).toBe(1);
+  expect(gen.stdout).toBe('{"ok":false,"error":"refusing to write a live database file"}\n');
+  expect(readFileSync(generation, "utf8")).toBe("generation");
+
   const cased = join(dir, "PRISM.DB");
   writeFileSync(cased, "keep-case");
   const byName = await runCli(["restore", "--to", cased], env);
@@ -423,3 +430,110 @@ test("two concurrent POSTs each own a readable 200 body", async () => {
   expect(await first.json()).toEqual(skip);
   expect(await second.json()).toEqual(skip);
 });
+
+test("CLI has no adopt command", async () => {
+  const result = await runCli(["adopt"], baseEnv());
+  expect(result.code, result.stderr).toBe(1);
+  expect(result.stdout).toBe('{"ok":false,"error":"unknown command"}\n');
+});
+
+function masterFile(path: string): string {
+  const shown = Bun.spawnSync(["git", "show", `origin/main:${path}`], {
+    cwd: repo,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (shown.exitCode === 0) return shown.stdout.toString();
+  const fetched = Bun.spawnSync(["git", "fetch", "--depth", "1", "origin", "main"], {
+    cwd: repo,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(fetched.exitCode, fetched.stderr.toString()).toBe(0);
+  const retry = Bun.spawnSync(["git", "show", `origin/main:${path}`], {
+    cwd: repo,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(retry.exitCode, retry.stderr.toString()).toBe(0);
+  return retry.stdout.toString();
+}
+
+test("boot path is byte-identical to origin/main", () => {
+  for (const path of ["Dockerfile", "src/seed.ts", "src/db.ts", "src/access.ts"]) {
+    expect(readFileSync(join(repo, path), "utf8")).toBe(masterFile(path));
+  }
+  const dockerfile = readFileSync(join(repo, "Dockerfile"), "utf8");
+  expect(dockerfile).toContain('CMD ["sh", "-c", "bun run src/seed.ts && bun run src/server.ts"]');
+  expect(dockerfile).not.toContain("backup.ts");
+  expect(dockerfile).not.toContain("adopt");
+  expect(dockerfile).not.toContain("prism.restore");
+  expect(readFileSync(join(repo, "src/seed.ts"), "utf8")).not.toMatch(/prism\.restore|adopt|backup/);
+});
+
+async function writeViaDb(path: string) {
+  const proc = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `process.env.DB_PATH = ${JSON.stringify(path)}; const { db } = await import("./src/db.ts"); db.close();`,
+    ],
+    { cwd: repo, env: baseEnv({ DB_PATH: path }), stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  expect(code, `${stderr}\n${stdout}`).toBe(0);
+}
+
+test("seed ignores prism.restore and leaves a seeded live database unchanged", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-boot-identity-"));
+  const live = join(dir, "prism.db");
+  const restore = join(dir, "prism.restore");
+  await writeViaDb(live);
+  const first = Bun.spawn(["bun", "run", "src/seed.ts"], {
+    cwd: repo,
+    env: baseEnv({ DB_PATH: live }),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect((await first.exited), await new Response(first.stderr).text()).toBe(0);
+  const before = new Database(live, { readonly: true });
+  const seeded = before.query("SELECT COUNT(*) AS n FROM variants").get() as { n: number };
+  before.close();
+  expect(seeded.n).toBeGreaterThan(0);
+  writeFileSync(restore, "not-live");
+  const second = Bun.spawn(["bun", "run", "src/seed.ts"], {
+    cwd: repo,
+    env: baseEnv({ DB_PATH: live }),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect((await second.exited), await new Response(second.stderr).text()).toBe(0);
+  const after = new Database(live, { readonly: true });
+  expect(after.query("SELECT COUNT(*) AS n FROM variants").get()).toEqual(seeded);
+  after.close();
+  expect(readFileSync(restore, "utf8")).toBe("not-live");
+}, { timeout: 30_000 });
+
+test("proveStartup accepts a database created by db.ts", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "prism-prove-ok-")), "ok.sqlite");
+  await writeViaDb(path);
+  const result = await proveStartup(path, baseEnv({ DB_PATH: path }));
+  expect(result).toEqual({ ok: true });
+}, { timeout: 60_000 });
+
+test("proveStartup rejects a database whose pilot_inquiries columns do not match startup", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "prism-prove-cols-")), "wrong.sqlite");
+  await writeViaDb(path);
+  const db = new Database(path);
+  db.exec("DROP TABLE pilot_inquiries");
+  db.exec("CREATE TABLE pilot_inquiries (id INTEGER PRIMARY KEY, email TEXT NOT NULL, created_at INTEGER NOT NULL)");
+  db.close();
+  const result = await proveStartup(path, baseEnv({ DB_PATH: path }));
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected proveStartup to fail");
+  expect(result.error).toMatch(/store_url|no such column/i);
+}, { timeout: 60_000 });

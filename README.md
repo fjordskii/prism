@@ -67,16 +67,15 @@ Before the S3 secrets exist, the same POST returns HTTP 200.
 
 A wrong bearer returns HTTP 401. A snapshot that ran and failed returns HTTP 500. Some S3 fields set and others missing is also HTTP 500, so the daily job goes red.
 
-Restore writes a new file. It does not replace the live database. The procedure is in [docs/backup-restore.md](docs/backup-restore.md).
+Restore writes a new file. It does not replace the live database. Boot is `bun run src/seed.ts && bun run src/server.ts` and does not read a restore file. The swap is manual; copy-paste Fly commands are in [RESTORE.md](RESTORE.md).
 
 ```sh
 fly machine start -a prism-personalize
 fly ssh console -a prism-personalize -C \
-  "bun src/backup.ts restore --date 2026-10-14 --to /data/prism.restore"
-fly machine restart -a prism-personalize
+  "bun src/backup.ts restore --date 2026-10-14 --to /data/prism-restored.sqlite"
 ```
 
-Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous` and timestamped generations), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. `adopt` proves a candidate with a DB-only check (integrity, migrate, startup prepares, counts) on a copy on the same volume; env/config is validated separately. An empty, corrupt, schema-less, or wrong-column file is moved to `/data/prism.restore.rejected` and live is left untouched. A config error (duplicate `READONLY_TOKENS`, unknown `PRISM_PLAN`) fails boot with live untouched. Copy, disk-full, timeout, or other prove-environment failures leave live and `prism.restore` in place and skip seed. A proof that overruns the timeout is SIGKILL'd and its result is ignored. A successful swap keeps the displaced live file at `prism.db.previous.<timestamp>` (last three by timestamp). If live cannot boot, adopt walks those generations newest to oldest; if none of them boot, it exits 1 so seed cannot create an empty database while a generation or quarantined file is still on the volume. `--day` in the future is refused so retention cannot prune real objects.
+Omit `--date` to restore the newest object. Success JSON includes `"integrity":"ok"` and `"boot":"ok"`. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous` and timestamped generations), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. After the CLI writes the new file, stop the machine, keep `/data/prism.db` as a dated copy, move the verified file in, and start. `--day` in the future is refused so retention cannot prune real objects.
 
 The MinIO drill is `tests/drill/backup-restore.test.ts`. It is not part of `tests/unit`, so a MinIO failure does not block deploy.
 

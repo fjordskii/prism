@@ -9,4 +9,4 @@ COPY landing ./landing
 ENV PORT=3000
 ENV DB_PATH=/data/prism.db
 EXPOSE 3000
-CMD ["sh", "-c", "bun run src/backup.ts adopt && bun run src/seed.ts && bun run src/server.ts"]
+CMD ["sh", "-c", "bun run src/seed.ts && bun run src/server.ts"]

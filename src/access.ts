@@ -1,9 +1,6 @@
 import { db } from "./db";
 import { DEV_EMAIL, SESSION_COOKIE, oauthEnabled, sessionEmail, type Role } from "./auth";
-import { parseReadonlyTokens } from "./boot-config";
 import { issueSiteWriteKeys } from "./write-key";
-
-export { parseReadonlyTokens } from "./boot-config";
 
 export {
   injectDemoWriteKey, readWriteKey, requireWriteKey, rotateWriteKey, siteWriteKey,
@@ -51,6 +48,25 @@ export function parseAllowlist(raw: string): AllowEntry[] {
     const sites = rest.slice(at + 1).split("|").map((site) => site.trim());
     if (sites.length === 0 || sites.some((site) => !SITE_RE.test(site))) continue;
     out.push({ email, role, sites });
+  }
+  return out;
+}
+
+export function parseReadonlyTokens(raw: string): ReadonlyMap<string, readonly string[] | null> {
+  const out = new Map<string, readonly string[] | null>();
+  for (const entry of raw.split(",")) {
+    if (entry === "") continue;
+    const at = entry.indexOf("@");
+    if (at === -1) {
+      if (out.has(entry)) throw new Error("duplicate readonly token");
+      out.set(entry, null);
+      continue;
+    }
+    const secret = entry.slice(0, at);
+    const sites = entry.slice(at + 1).split("|").map((site) => site.trim());
+    if (secret === "" || sites.length === 0 || sites.some((site) => !SITE_RE.test(site))) continue;
+    if (out.has(secret)) throw new Error("duplicate readonly token");
+    out.set(secret, sites);
   }
   return out;
 }
