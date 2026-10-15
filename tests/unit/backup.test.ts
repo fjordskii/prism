@@ -43,6 +43,34 @@ const storage = {
   S3_SECRET_ACCESS_KEY: "drill-secret",
 };
 
+test("backup.ts does not import db, server, seed, or access", () => {
+  const source = readFileSync(join(repo, "src/backup.ts"), "utf8");
+  for (const name of ["db", "server", "seed", "access"]) {
+    expect(source).not.toMatch(new RegExp(String.raw`(?:from|import\(|require\()\s*["']\./${name}(?:\.ts)?["']`));
+  }
+});
+
+test("VACUUM INTO on a readonly connection copies the file and leaves the source readable", () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-vacuum-"));
+  const src = join(dir, "src.sqlite");
+  const dest = join(dir, "copy.sqlite");
+  const live = new Database(src);
+  live.exec("CREATE TABLE visitors (id INTEGER PRIMARY KEY)");
+  live.run("INSERT INTO visitors (id) VALUES (1)");
+  live.close();
+
+  const readonly = new Database(src, { readonly: true });
+  readonly.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`);
+  readonly.close();
+
+  const copy = new Database(dest, { readonly: true });
+  expect(copy.query("SELECT COUNT(*) AS n FROM visitors").get() as { n: number }).toEqual({ n: 1 });
+  copy.close();
+  const source = new Database(src, { readonly: true });
+  expect(source.query("SELECT COUNT(*) AS n FROM visitors").get() as { n: number }).toEqual({ n: 1 });
+  source.close();
+});
+
 test("snapshot with no S3 env exits 0 and prints the skip receipt", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-backup-skip-"));
   const result = await runCli(["snapshot"], baseEnv({ DB_PATH: join(dir, "absent.sqlite") }));

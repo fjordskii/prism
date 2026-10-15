@@ -1,5 +1,3 @@
-// Importing src/db.ts, src/server.ts, src/seed.ts, or src/access.ts opens the live database or exits the process.
-
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
@@ -574,7 +572,6 @@ export function handleBackupRequest(req: Request, env: typeof process.env, now: 
   const key = `${PREFIX}${day}.sqlite.gz`;
   const existing = inflight.get(key);
   if (existing) return existing;
-  // One child per UTC day. A second POST waits on that child. The entry is dropped when it finishes, so a later POST runs again.
   const run = runSnapshotChild(env, day)
     .catch((err: unknown) => Response.json({ ok: false, error: errorMessage(err) }, { status: 500 }))
     .finally(() => {
