@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -223,6 +223,49 @@ function field(row: unknown, name: string): unknown {
   return row[name as keyof typeof row];
 }
 
+const TABLE_SQL = /CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\(/g;
+
+let prismTableList: string[] | undefined;
+
+function prismTables(): string[] {
+  if (prismTableList !== undefined) return prismTableList;
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "db.ts"), "utf8");
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of source.matchAll(TABLE_SQL)) {
+    const name = match[1];
+    if (name === undefined || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  if (names.length === 0) throw new Error("db.ts has no CREATE TABLE");
+  prismTableList = names;
+  return names;
+}
+
+function acceptRestore(path: string): string | undefined {
+  let size: number;
+  try {
+    const st = statSync(path);
+    if (!st.isFile()) return "restore file is not a file";
+    size = st.size;
+  } catch {
+    return "restore file is missing";
+  }
+  if (size === 0) return "restore file is empty";
+  let integrity: string;
+  try {
+    integrity = integrityOf(path);
+  } catch (err) {
+    return errorMessage(err);
+  }
+  if (integrity !== "ok") return `integrity_check returned ${integrity}`;
+  const have = new Set(Object.keys(tableCounts(path)));
+  const missing = prismTables().filter((name) => !have.has(name));
+  if (missing.length > 0) return `missing tables ${missing.join(", ")}`;
+  return undefined;
+}
+
 function integrityOf(path: string): string {
   const db = new Database(path, { readonly: true });
   try {
@@ -393,9 +436,22 @@ function sameInode(left: string, right: string): boolean {
   }
 }
 
+function linkedTarget(path: string): string | undefined {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return undefined;
+    return resolve(dirname(path), readlinkSync(path));
+  } catch {
+    return undefined;
+  }
+}
+
 function sameLiveFile(to: string, member: string): boolean {
   if (sameInode(to, member)) return true;
-  return foldPath(to) === foldPath(member);
+  if (foldPath(to) === foldPath(member)) return true;
+  const linked = linkedTarget(to);
+  if (linked === undefined) return false;
+  if (sameInode(linked, member)) return true;
+  return foldPath(linked) === foldPath(member);
 }
 
 function refuseTarget(to: string, env: typeof process.env): string | undefined {
@@ -512,16 +568,16 @@ function rejectPending(pending: string, previous: string | null, live: string): 
 }
 
 function finishSwap(pending: string, previous: string, live: string): AdoptResult {
-  let integrity: string;
-  try {
-    integrity = integrityOf(pending);
-  } catch {
-    return rejectPending(pending, previous, live);
-  }
-  if (integrity !== "ok") return rejectPending(pending, previous, live);
+  const refused = acceptRestore(pending);
+  if (refused !== undefined) return rejectPending(pending, previous, live);
   unlinkSidecars(live);
   renameSync(pending, live);
-  if (isFile(previous)) unlinkSync(previous);
+  const after = acceptRestore(live);
+  if (after !== undefined) {
+    quarantinePending(live);
+    if (isFile(previous) && !isFile(live)) renameSync(previous, live);
+    return { ok: true, adopted: false };
+  }
   return { ok: true, adopted: true, path: live };
 }
 
@@ -531,20 +587,14 @@ function adoptClassified(dbPath: string): AdoptResult {
     case "clear":
       return { ok: true, adopted: false };
     case "leftover":
-      unlinkSync(state.previous);
       return { ok: true, adopted: false };
     case "missing-pending":
       renameSync(state.previous, dbPath);
       return { ok: false, error: "restore incomplete; moved the previous database back" };
     case "pending": {
       const previous = `${dbPath}.previous`;
-      try {
-        const integrity = integrityOf(state.pending);
-        if (integrity !== "ok") return rejectPending(state.pending, null, dbPath);
-      } catch {
-        return rejectPending(state.pending, null, dbPath);
-      }
-      if (isFile(previous)) return { ok: false, error: `${basename(previous)} already exists` };
+      const refused = acceptRestore(state.pending);
+      if (refused !== undefined) return rejectPending(state.pending, null, dbPath);
       if (state.live !== null) renameSync(state.live, previous);
       return finishSwap(state.pending, previous, dbPath);
     }
