@@ -1,10 +1,10 @@
-// Child used by adopt: open DB_PATH with boot init, prepare startup SQL, smoke-query tables.
+// DB-only prove child: integrity/migrate, startup prepares, and counts.
+// Does not import access, auth, server, or other modules that read app env/config.
 const path = process.argv[2];
 if (path === undefined || path === "") {
   process.stderr.write("prove-boot: missing database path\n");
   process.exit(1);
 }
-process.env.DB_PATH = path;
 
 const hang = process.env.PRISM_PROVE_HANG === "1";
 const delayMs = Number(process.env.PRISM_PROVE_DELAY_MS ?? "");
@@ -17,15 +17,10 @@ if (hang) {
 }
 if (Number.isFinite(delayMs) && delayMs > 0) await Bun.sleep(delayMs);
 
-const { db } = await import("./db");
-await import("./access");
-await import("./auth");
-await import("./write-key");
-await import("./plans");
-await import("./bandit");
-await import("./experiences");
-await import("./server");
+const { openDatabase } = await import("./open-db");
 const { pooledTotals, experienceArms, banditTotalsIncludingUnkeyed } = await import("./counts");
+
+const db = openDatabase(path);
 
 db.prepare(
   "INSERT INTO sites (site, plan, created_at) VALUES (?, 'agency', ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan",
@@ -33,6 +28,23 @@ db.prepare(
 db.prepare("SELECT COUNT(*) AS n FROM variants WHERE site = ?");
 db.prepare(
   "INSERT INTO variants (site, name, selector, ops, audience, weight, active, created_at) VALUES (?, ?, ?, ?, ?, 1, 1, ?)",
+);
+db.prepare("SELECT site FROM sites WHERE write_key = ?");
+db.prepare("SELECT write_key FROM sites WHERE site = ?");
+db.prepare("SELECT role FROM accounts WHERE email = ?");
+db.prepare(
+  `SELECT a.role AS account_role, s.site AS site, s.role AS site_role
+   FROM accounts a LEFT JOIN account_sites s ON s.email = a.email
+   WHERE a.email = ?`,
+);
+db.prepare("SELECT plan, holdout_pct FROM sites WHERE site = ?");
+db.prepare("SELECT COUNT(*) AS n FROM visitors WHERE site = ? AND last_seen >= ?");
+db.prepare(
+  `SELECT site FROM sites
+   UNION SELECT DISTINCT site FROM variants
+   UNION SELECT DISTINCT site FROM events
+   UNION SELECT DISTINCT site FROM visitors
+   UNION SELECT DISTINCT site FROM orders`,
 );
 
 pooledTotals(db, "_prove");

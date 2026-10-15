@@ -778,3 +778,40 @@ test("quarantine during fallback does not overwrite an existing unbootable file"
   const extras = readdirSync(dir).filter((name) => name === "prism.db.unbootable" || name.startsWith("prism.db.unbootable."));
   expect(extras.length).toBeGreaterThan(2501);
 }, { timeout: ADOPT_TIMEOUT });
+
+test("duplicate READONLY_TOKENS fail boot with live untouched; a later boot with the secret fixed stays on live", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-ro-dup-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["mark-newest-live"]);
+  writeBootable(`${live}.previous.100`, ["mark-older-gen"]);
+
+  const bad = await runAdopt(live, { READONLY_TOKENS: "x,x" });
+  expect(bad.code, bad.stderr).toBe(1);
+  expect(JSON.parse(bad.stdout).ok).toBe(false);
+  expect(String(JSON.parse(bad.stdout).error)).toMatch(/duplicate readonly token/i);
+  expect(visitorId(live)).toBe("mark-newest-live");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(visitorId(`${live}.previous.100`)).toBe("mark-older-gen");
+
+  const good = await runAdopt(live, { READONLY_TOKENS: "fixed-token" });
+  expect(good.code, good.stderr).toBe(0);
+  expect(JSON.parse(good.stdout)).toEqual({ ok: true, adopted: false });
+  expect(visitorId(live)).toBe("mark-newest-live");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(visitorId(`${live}.previous.100`)).toBe("mark-older-gen");
+}, { timeout: ADOPT_TIMEOUT });
+
+test("an unknown PRISM_PLAN fails boot and does not roll live back to a generation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-bad-plan-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  writeBootable(`${live}.previous.200`, ["older"]);
+
+  const result = await runAdopt(live, { PRISM_PLAN: "not-a-plan" });
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout).ok).toBe(false);
+  expect(String(JSON.parse(result.stdout).error)).toMatch(/PRISM_PLAN|known plan/i);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(visitorId(`${live}.previous.200`)).toBe("older");
+}, { timeout: ADOPT_TIMEOUT });

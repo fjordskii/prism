@@ -4,6 +4,7 @@ import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkS
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateBootConfig } from "./boot-config";
 
 export type DailyKey = string & { readonly __brand: "DailyKey" };
 
@@ -53,7 +54,8 @@ export type AdoptResult =
 type ProveResult =
   | { ok: true }
   | { ok: false; kind: "invalid"; error: string }
-  | { ok: false; kind: "env"; error: string };
+  | { ok: false; kind: "env"; error: string }
+  | { ok: false; kind: "halt"; error: string };
 
 type CliResult = SnapshotResult | RestoreResult | AdoptResult;
 
@@ -713,14 +715,33 @@ function quarantineLive(live: string): string {
 
 function proveEnv(dbPath: string): Record<string, string> {
   const out: Record<string, string> = {};
+  for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "USER", "LANG", "LC_ALL"]) {
+    const value = process.env[key];
+    if (typeof value === "string") out[key] = value;
+  }
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value !== "string") continue;
-    if (key.startsWith("AWS_") || key.startsWith("S3_")) continue;
-    if (key === "BACKUP_TOKEN") continue;
-    out[key] = value;
+    if (key.startsWith("PRISM_PROVE_") || key === "PRISM_ADOPT_INJECT") out[key] = value;
   }
   out.DB_PATH = dbPath;
   return out;
+}
+
+function classifyProveFailure(code: number | null, error: string): Exclude<ProveResult, { ok: true }>["kind"] {
+  if (code === null || code < 0 || code === 137 || code === 143) return "env";
+  if (
+    /ENOSPC|EDQUOT|ENOMEM|no space left|disk I\/O error|SQLITE_FULL|SQLITE_IOERR|SQLITE_NOMEM|killed|timed out/i.test(error)
+  ) {
+    return "env";
+  }
+  if (
+    /SQLITE_|no such column|no such table|integrity_check|not a database|file is not a database|no user tables|restore file is empty|has no user tables|prove-boot: no user tables/i.test(
+      error,
+    )
+  ) {
+    return "invalid";
+  }
+  return "halt";
 }
 
 function envMs(name: string, fallback: number): number {
@@ -773,13 +794,7 @@ async function runProveBoot(dbPath: string): Promise<ProveResult> {
     if (code === 0) return { ok: true };
     const text = `${stderr}\n${stdout}`.replace(/\s+/g, " ").trim();
     const error = text === "" ? "prove-boot failed" : text.slice(0, 500);
-    if (
-      code === null || code < 0 || code === 137 || code === 143
-      || /ENOSPC|EDQUOT|ENOMEM|no space left|disk I\/O error|SQLITE_FULL|SQLITE_IOERR|SQLITE_NOMEM|killed|timed out/i.test(error)
-    ) {
-      return { ok: false, kind: "env", error };
-    }
-    return { ok: false, kind: "invalid", error };
+    return { ok: false, kind: classifyProveFailure(code, error), error };
   } finally {
     clearTimeout(timer);
     if (killTimer !== undefined) clearTimeout(killTimer);
@@ -791,7 +806,9 @@ async function proveCandidate(path: string): Promise<ProveResult> {
     const refused = inspectCandidate(path);
     if (refused !== undefined) return { ok: false, kind: "invalid", error: refused };
   } catch (err) {
-    return { ok: false, kind: isEnvError(err) ? "env" : "invalid", error: errorMessage(err) };
+    const error = errorMessage(err);
+    if (isEnvError(err)) return { ok: false, kind: "env", error };
+    return { ok: false, kind: classifyProveFailure(1, error) === "invalid" ? "invalid" : "halt", error };
   }
   let work: string | undefined;
   try {
@@ -808,7 +825,9 @@ async function proveCandidate(path: string): Promise<ProveResult> {
     copyDatabase(path, copy);
     return await runProveBoot(copy);
   } catch (err) {
-    return { ok: false, kind: isEnvError(err) ? "env" : "invalid", error: errorMessage(err) };
+    const error = errorMessage(err);
+    if (isEnvError(err)) return { ok: false, kind: "env", error };
+    return { ok: false, kind: classifyProveFailure(1, error) === "invalid" ? "invalid" : "halt", error };
   } finally {
     if (work !== undefined) rmSync(work, { recursive: true, force: true });
   }
@@ -820,7 +839,7 @@ async function restoreGeneration(live: string, gen: string): Promise<boolean> {
   copyDatabase(gen, live);
   const proved = await proveCandidate(live);
   if (proved.ok) return true;
-  if (proved.kind === "env") {
+  if (proved.kind === "env" || proved.kind === "halt") {
     process.stderr.write(`adopt: prove of restored generation deferred (${proved.error}); leaving copy in place\n`);
     return true;
   }
@@ -884,6 +903,10 @@ async function ensureLive(live: string): Promise<void> {
       process.stderr.write(`adopt: prove of live deferred (${proved.error}); leaving live in place\n`);
       return;
     }
+    if (proved.kind === "halt") {
+      process.stderr.write(`adopt: boot check halted (${proved.error}); leaving live in place\n`);
+      throw new Error(proved.error);
+    }
     const gens = listGenerations(live);
     process.stderr.write(
       `adopt: live database failed boot${gens.length === 0 ? "" : "; restoring from generations"}: ${proved.error}\n`,
@@ -946,7 +969,7 @@ async function adoptPending(dbPath: string): Promise<AdoptResult> {
   if (!isRegularFile(pending)) return { ok: true, adopted: false };
   const proved = await proveCandidate(pending);
   if (!proved.ok) {
-    if (proved.kind === "env") {
+    if (proved.kind === "env" || proved.kind === "halt") {
       process.stderr.write(`adopt: prove deferred: ${proved.error}\n`);
       return { ok: false, error: proved.error };
     }
@@ -965,6 +988,10 @@ async function adoptPending(dbPath: string): Promise<AdoptResult> {
     process.stderr.write(`adopt: prove of swapped live deferred (${liveOk.error}); leaving swapped file in place\n`);
     return { ok: true, adopted: true, path: dbPath };
   }
+  if (liveOk.kind === "halt") {
+    process.stderr.write(`adopt: boot check halted after swap (${liveOk.error}); leaving swapped file in place\n`);
+    return { ok: false, error: liveOk.error };
+  }
   process.stderr.write(`adopt: swapped database failed boot; restoring from generations: ${liveOk.error}\n`);
   quarantineLive(dbPath);
   if (!(await restoreFromGenerations(dbPath))) refuseSeed();
@@ -972,6 +999,11 @@ async function adoptPending(dbPath: string): Promise<AdoptResult> {
 }
 
 async function adoptClassified(dbPath: string): Promise<AdoptResult> {
+  const configError = validateBootConfig(process.env);
+  if (configError !== undefined) {
+    process.stderr.write(`adopt: boot config invalid: ${configError}\n`);
+    return { ok: false, error: configError };
+  }
   const pending = await adoptPending(dbPath);
   if (!pending.ok) return pending;
   await ensureLive(dbPath);
