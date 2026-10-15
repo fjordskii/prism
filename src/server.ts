@@ -30,6 +30,7 @@ import {
   GROWTH_BODY_MAX, attributionFrom, growthClientScript, growthRange, growthReport, parseGrowthBody,
   utcDay, type Attribution, type GrowthCountRow, type GrowthEvent,
 } from "./growth";
+import { handleBackupRequest } from "./backup";
 
 // Real SRI hash of the snippet, printed so operators can pin it in CSP/integrity.
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
@@ -37,6 +38,7 @@ console.log("snippet.v1.js SRI: sha384-" + snippetSri);
 
 const app = new Hono();
 app.use("/api/*", cors());
+app.post("/internal/backup", (c) => handleBackupRequest(c.req.raw, process.env, new Date()));
 // Malformed JSON bodies are a client error, not a 500.
 app.onError((err, c) => {
   if (err instanceof HTTPException) return err.getResponse();
@@ -781,7 +783,7 @@ app.get("/privacy", (c) =>
 <h2>Your rights (GDPR / CCPA)</h2>
 <p>Export one visitor: <code>GET /api/visitors/:id?site=…</code>. Erase one visitor: <code>DELETE /api/visitors/:id?site=…</code>, which removes their profile, every event, and every order. Both endpoints require the same Bearer token as the dashboard. Full site export: <code>GET /api/export?site=…</code> (also token-gated).</p>
 <h2>Retention &amp; subprocessors</h2>
-<p>Data lives in SQLite on Fly.io (US, iad region) with daily volume snapshots. The only subprocessor is Fly.io. Contact: privacy@sundaymorning.software.</p>`
+<p>Data lives in SQLite on Fly.io (US, iad region). Fly.io keeps daily volume snapshots. When off-volume backup is configured, Prism also stores one gzipped copy per day in Tigris and deletes copies older than 14 days. Tigris is then a subprocessor. Fly.io hosts the app. Contact: privacy@sundaymorning.software.</p>`
     )
   )
 );
@@ -797,7 +799,7 @@ app.get("/security", (c) =>
 <h2>Data integrity</h2>
 <p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% intervals. Each audience has its own holdout. The default is 10% of visitors, and a site can set its own percentage. Wide intervals are reported as not enough data yet.</p>
 <h2>Data flows</h2>
-<p>Browser to Prism API (HTTPS only, HSTS via the Fly edge) to SQLite on an encrypted Fly volume. No data leaves that path. Privacy endpoints are documented at <a href="/privacy">/privacy</a>.</p>`
+<p>Browser to Prism API (HTTPS only, HSTS via the Fly edge) to SQLite on an encrypted Fly volume. When off-volume backup is configured, the app uploads that database to Tigris. Visitor data does not go anywhere else.</p>`
     )
   )
 );
