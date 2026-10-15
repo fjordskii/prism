@@ -1,38 +1,21 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { openDatabase } from "../../src/open-db";
 
 const repo = join(import.meta.dir, "../..");
-
-test("core tables parsed from db.ts skip the IF NOT EXISTS comment", () => {
-  expect(prismTableNames()).toEqual([
-    "visitors",
-    "variants",
-    "events",
-    "sites",
-    "accounts",
-    "pilot_inquiries",
-    "orders",
-    "order_credits",
-    "growth_events",
-    "account_sites",
-  ]);
-});
-
-function prismTableNames(): string[] {
-  const source = readFileSync(join(repo, "src/db.ts"), "utf8");
-  const names: string[] = [];
-  const seen = new Set<string>();
-  for (const match of source.matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\(/g)) {
-    const name = match[1];
-    if (name === undefined || seen.has(name)) continue;
-    seen.add(name);
-    names.push(name);
-  }
-  return names;
-}
+const ADOPT_TIMEOUT = 60_000;
 
 function baseEnv(dbPath: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -68,14 +51,83 @@ function writeVisitors(path: string, ids: number[]) {
   db.close();
 }
 
-function writePrism(path: string, ids: number[]) {
+function writeWrongColumns(path: string, ids: number[]) {
   const db = new Database(path);
-  for (const name of prismTableNames()) {
-    db.exec(`CREATE TABLE "${name.replaceAll('"', '""')}" (id INTEGER PRIMARY KEY)`);
+  for (const name of [
+    "visitors",
+    "variants",
+    "events",
+    "sites",
+    "accounts",
+    "pilot_inquiries",
+    "orders",
+    "order_credits",
+    "growth_events",
+    "account_sites",
+  ]) {
+    db.exec(`CREATE TABLE "${name}" (id INTEGER PRIMARY KEY)`);
   }
   const insert = db.query("INSERT INTO visitors (id) VALUES (?)");
   for (const id of ids) insert.run(id);
   db.close();
+}
+
+function writeBootable(path: string, ids: string[]) {
+  const db = openDatabase(path);
+  const insert = db.query(
+    "INSERT INTO visitors (id, site, first_seen, last_seen, visits, traits) VALUES (?, 'demo', 1, 1, 0, '{}')",
+  );
+  for (const id of ids) insert.run(id);
+  db.close();
+}
+
+function writeOlderSchema(path: string, visitorId: string) {
+  const db = new Database(path);
+  db.exec(`
+    CREATE TABLE visitors (
+      id TEXT PRIMARY KEY,
+      site TEXT NOT NULL,
+      first_seen INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL,
+      visits INTEGER NOT NULL DEFAULT 0,
+      traits TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO visitors (id, site, first_seen, last_seen, visits, traits)
+    VALUES (${sqlString(visitorId)}, 'demo', 10, 20, 4, '{"orders":2}');
+    CREATE TABLE variants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      site TEXT NOT NULL,
+      name TEXT NOT NULL,
+      selector TEXT NOT NULL,
+      ops TEXT NOT NULL,
+      audience TEXT NOT NULL DEFAULT '{}',
+      weight REAL NOT NULL DEFAULT 1,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+    INSERT INTO variants (site, name, selector, ops, audience, created_at)
+    VALUES ('demo', 'Hero', '#hero', '[]', '[]', 10);
+    CREATE TABLE events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      site TEXT NOT NULL,
+      visitor_id TEXT NOT NULL,
+      variant_id INTEGER,
+      selector TEXT NOT NULL,
+      type TEXT NOT NULL,
+      ts INTEGER NOT NULL
+    );
+    INSERT INTO events (site, visitor_id, variant_id, selector, type, ts)
+    VALUES ('demo', ${sqlString(visitorId)}, 1, '#hero', 'impression', 11);
+    CREATE TABLE sites (site TEXT PRIMARY KEY, plan TEXT NOT NULL, created_at INTEGER NOT NULL);
+    INSERT INTO sites (site, plan, created_at) VALUES ('demo', 'growth', 9);
+    CREATE TABLE accounts (email TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'editor', created_at INTEGER NOT NULL);
+    INSERT INTO accounts (email, role, created_at) VALUES ('owner@prism.test', 'owner', 8);
+  `);
+  db.close();
+}
+
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function visitorCount(path: string): number {
@@ -83,6 +135,23 @@ function visitorCount(path: string): number {
   const row = db.query("SELECT COUNT(*) AS n FROM visitors").get() as { n: number };
   db.close();
   return row.n;
+}
+
+function generations(live: string): string[] {
+  const dir = dirname(live);
+  const prefix = `${basename(live)}.previous`;
+  const nameRe = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\.\\d+)?$`);
+  return readdirSync(dir)
+    .filter((name) => nameRe.test(name))
+    .map((name) => join(dir, name))
+    .filter((path) => {
+      try {
+        return lstatSync(path).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .sort();
 }
 
 test("adopt with no pending file leaves the live database in place", async () => {
@@ -93,26 +162,118 @@ test("adopt with no pending file leaves the live database in place", async () =>
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(visitorCount(live)).toBe(7);
-});
+}, { timeout: ADOPT_TIMEOUT });
 
-test("adopt swaps prism.restore onto the live path and removes wal sidecars", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-pending-"));
+test("matching table names with the wrong columns are rejected and live stays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-wrong-cols-"));
   const live = join(dir, "prism.db");
-  writePrism(live, [1]);
-  writeFileSync(`${live}-wal`, "old-wal");
-  writeFileSync(`${live}-shm`, "old-shm");
+  writeBootable(live, ["keep-1", "keep-2"]);
+  const before = readFileSync(live);
   const pending = join(dir, "prism.restore");
-  writePrism(pending, [1, 2]);
+  writeWrongColumns(pending, [1, 2, 3]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toContain("adopt: moved stray restore aside to ");
+  expect(result.stderr).toMatch(/no such column: variant_id/);
+  expect(readFileSync(live)).toEqual(before);
+  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(true);
+  expect(generations(live)).toEqual([]);
+  expect(visitorCount(live)).toBe(2);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("an older-schema backup is adopted and migrates up", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-migrate-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["old-live"]);
+  const pending = join(dir, "prism.restore");
+  writeOlderSchema(pending, "keep-me");
 
   const result = await runAdopt(live);
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
-  expect(visitorCount(live)).toBe(2);
-  expect(existsSync(`${live}-wal`)).toBe(false);
-  expect(existsSync(`${live}-shm`)).toBe(false);
   expect(existsSync(pending)).toBe(false);
-  expect(visitorCount(`${live}.previous`)).toBe(1);
-});
+  expect(visitorCount(live)).toBe(1);
+
+  const migrated = openDatabase(live);
+  const visitor = migrated.query("SELECT id, visits, traits FROM visitors WHERE id = ?").get("keep-me") as {
+    id: string;
+    visits: number;
+    traits: string;
+  };
+  expect(visitor).toEqual({ id: "keep-me", visits: 4, traits: '{"orders":2}' });
+  const events = migrated.query("PRAGMA table_info(events)").all() as { name: string }[];
+  expect(events.some((col) => col.name === "audience_key")).toBe(true);
+  const sites = migrated.query("PRAGMA table_info(sites)").all() as { name: string }[];
+  expect(sites.some((col) => col.name === "write_key")).toBe(true);
+  expect(migrated.query("SELECT name FROM sqlite_master WHERE name = 'account_sites'").get()).toEqual({
+    name: "account_sites",
+  });
+  expect(migrated.query("SELECT name FROM sqlite_master WHERE name = 'pilot_inquiries'").get()).toEqual({
+    name: "pilot_inquiries",
+  });
+  migrated.close();
+
+  const gens = generations(live);
+  expect(gens).toHaveLength(1);
+  expect(basename(gens[0]!)).toMatch(/^prism\.db\.previous\.\d+$/);
+  expect(visitorCount(gens[0]!)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("adopt checkpoints live WAL into a timestamped generation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-wal-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["committed"]);
+  const writer = new Database(live);
+  writer.exec("PRAGMA journal_mode = WAL");
+  writer.exec("PRAGMA wal_autocheckpoint = 0");
+  writer.run(
+    "INSERT INTO visitors (id, site, first_seen, last_seen, visits, traits) VALUES ('wal-only', 'demo', 2, 2, 0, '{}')",
+  );
+  writer.close();
+  expect(existsSync(`${live}-wal`)).toBe(true);
+
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["restored"]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
+  expect(visitorCount(live)).toBe(1);
+  expect(existsSync(pending)).toBe(false);
+
+  const gens = generations(live);
+  expect(gens).toHaveLength(1);
+  const displaced = new Database(gens[0]!);
+  const ids = displaced.query("SELECT id FROM visitors ORDER BY id").all() as { id: string }[];
+  displaced.close();
+  expect(ids.map((row) => row.id)).toEqual(["committed", "wal-only"]);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("successful adopts keep the last three timestamped generations", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-gens-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["g0"]);
+  for (const id of ["g1", "g2", "g3", "g4"]) {
+    writeBootable(join(dir, "prism.restore"), [id]);
+    const result = await runAdopt(live);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: true, path: live });
+  }
+  expect(visitorCount(live)).toBe(1);
+  const gens = generations(live);
+  expect(gens).toHaveLength(3);
+  for (const gen of gens) {
+    expect(basename(gen)).toMatch(/^prism\.db\.previous\.\d+$/);
+  }
+  const ids = gens.map((path) => {
+    const row = new Database(path, { readonly: true }).query("SELECT id FROM visitors").get() as { id: string };
+    return row.id;
+  });
+  expect(ids.sort()).toEqual(["g1", "g2", "g3"]);
+}, { timeout: 180_000 });
 
 test("a pending file that is not a database is moved aside and the live file stays", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-bad-"));
@@ -129,16 +290,16 @@ test("a pending file that is not a database is moved aside and the live file sta
   expect(readFileSync(live)).toEqual(before);
   expect(existsSync(pending)).toBe(false);
   expect(existsSync(`${pending}.rejected`)).toBe(true);
-  expect(existsSync(`${live}.previous`)).toBe(false);
+  expect(generations(live)).toEqual([]);
   expect(visitorCount(live)).toBe(4);
-});
+}, { timeout: ADOPT_TIMEOUT });
 
 test("adopt finishes a swap that stopped after the live file was moved aside", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-aside-"));
   const live = join(dir, "prism.db");
-  writePrism(`${live}.previous`, [1]);
+  writeBootable(`${live}.previous.1000`, ["aside-live"]);
   const pending = join(dir, "prism.restore");
-  writePrism(pending, [1, 2]);
+  writeBootable(pending, ["new-a", "new-b"]);
   writeFileSync(`${live}-wal`, "old-wal");
 
   const result = await runAdopt(live);
@@ -146,71 +307,71 @@ test("adopt finishes a swap that stopped after the live file was moved aside", a
   expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
   expect(visitorCount(live)).toBe(2);
   expect(existsSync(pending)).toBe(false);
-  expect(visitorCount(`${live}.previous`)).toBe(1);
-  expect(existsSync(`${live}-wal`)).toBe(false);
-});
+  expect(visitorCount(`${live}.previous.1000`)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });
 
-test("adopt puts the previous database back when the aside file is not a database", async () => {
+test("a rejected candidate does not touch timestamped generations", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-aside-bad-"));
   const live = join(dir, "prism.db");
-  writeVisitors(`${live}.previous`, [1, 2, 3]);
+  writeBootable(live, ["live-row"]);
+  writeBootable(`${live}.previous.2000`, ["gen-row"]);
   writeFileSync(join(dir, "prism.restore"), "not a database");
 
   const result = await runAdopt(live);
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(result.stderr).toContain("adopt: moved stray restore aside to ");
-  expect(visitorCount(live)).toBe(3);
-  expect(existsSync(`${live}.previous`)).toBe(false);
+  expect(visitorCount(live)).toBe(1);
+  expect(visitorCount(`${live}.previous.2000`)).toBe(1);
   expect(existsSync(join(dir, "prism.restore"))).toBe(false);
   expect(existsSync(join(dir, "prism.restore.rejected"))).toBe(true);
-});
+}, { timeout: ADOPT_TIMEOUT });
 
-test("adopt puts the previous database back when the pending file is gone", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-rollback-"));
+test("a restore symlink to the live database is ignored and generations stay", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-symlink-"));
   const live = join(dir, "prism.db");
-  writeVisitors(`${live}.previous`, [4, 5, 6, 7]);
+  writeBootable(live, ["sym-live"]);
+  writeBootable(`${live}.previous.3000`, ["sym-gen"]);
+  symlinkSync(live, join(dir, "prism.restore"));
 
   const result = await runAdopt(live);
-  expect(result.code, result.stderr).toBe(1);
-  expect(result.stdout).toBe('{"ok":false,"error":"restore incomplete; moved the previous database back"}\n');
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(visitorCount(live)).toBe(1);
+  expect(visitorCount(`${live}.previous.3000`)).toBe(1);
+  expect(lstatSync(join(dir, "prism.restore")).isSymbolicLink()).toBe(true);
+  expect(existsSync(join(dir, "prism.restore.rejected"))).toBe(false);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("adopt restores the newest generation when live is missing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-rollback-"));
+  const live = join(dir, "prism.db");
+  writeBootable(`${live}.previous.4000`, ["a", "b", "c", "d"]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(visitorCount(live)).toBe(4);
-  expect(existsSync(`${live}.previous`)).toBe(false);
-});
+  expect(visitorCount(`${live}.previous.4000`)).toBe(4);
+}, { timeout: ADOPT_TIMEOUT });
 
 test("adopt keeps a leftover previous file beside the live database", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-leftover-"));
   const live = join(dir, "prism.db");
-  writeVisitors(live, [3, 4, 5]);
-  writeVisitors(`${live}.previous`, [9]);
+  writeBootable(live, ["l1", "l2", "l3"]);
+  writeBootable(`${live}.previous.5000`, ["p1"]);
 
   const result = await runAdopt(live);
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(visitorCount(live)).toBe(3);
-  expect(visitorCount(`${live}.previous`)).toBe(1);
-});
-
-test("a later adopt replaces previous with the displaced live database", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-both-"));
-  const live = join(dir, "prism.db");
-  writePrism(live, [1]);
-  writeVisitors(`${live}.previous`, [8]);
-  const pending = join(dir, "prism.restore");
-  writePrism(pending, [1, 2]);
-
-  const result = await runAdopt(live);
-  expect(result.code, result.stderr).toBe(0);
-  expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
-  expect(visitorCount(live)).toBe(2);
-  expect(existsSync(pending)).toBe(false);
-  expect(visitorCount(`${live}.previous`)).toBe(1);
-});
+  expect(visitorCount(`${live}.previous.5000`)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });
 
 test("a zero-byte restore is rejected and the live database stays", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-zero-"));
   const live = join(dir, "prism.db");
-  writePrism(live, [1, 2, 3]);
+  writeBootable(live, ["z1", "z2", "z3"]);
   const before = readFileSync(live);
   const pending = join(dir, "prism.restore");
   writeFileSync(pending, "");
@@ -223,12 +384,13 @@ test("a zero-byte restore is rejected and the live database stays", async () => 
   expect(existsSync(pending)).toBe(false);
   expect(existsSync(`${pending}.rejected`)).toBe(true);
   expect(visitorCount(live)).toBe(3);
-});
+  expect(generations(live)).toEqual([]);
+}, { timeout: ADOPT_TIMEOUT });
 
 test("a sqlite file with no Prism tables is rejected and the live database stays", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-schema-"));
   const live = join(dir, "prism.db");
-  writePrism(live, [4, 5]);
+  writeBootable(live, ["s1", "s2"]);
   const before = readFileSync(live);
   const pending = join(dir, "prism.restore");
   const empty = new Database(pending);
@@ -244,13 +406,13 @@ test("a sqlite file with no Prism tables is rejected and the live database stays
   expect(existsSync(pending)).toBe(false);
   expect(existsSync(`${pending}.rejected`)).toBe(true);
   expect(visitorCount(live)).toBe(2);
-});
+}, { timeout: ADOPT_TIMEOUT });
 
 test("a failed adopt leaves an existing previous file in place", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-keep-prev-"));
   const live = join(dir, "prism.db");
-  writePrism(live, [1, 2, 3, 4]);
-  writeVisitors(`${live}.previous`, [9]);
+  writeBootable(live, ["k1", "k2", "k3", "k4"]);
+  writeBootable(`${live}.previous.6000`, ["kept"]);
   const pending = join(dir, "prism.restore");
   writeFileSync(pending, "");
 
@@ -258,7 +420,59 @@ test("a failed adopt leaves an existing previous file in place", async () => {
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(visitorCount(live)).toBe(4);
-  expect(visitorCount(`${live}.previous`)).toBe(1);
+  expect(visitorCount(`${live}.previous.6000`)).toBe(1);
   expect(existsSync(pending)).toBe(false);
   expect(existsSync(`${pending}.rejected`)).toBe(true);
-});
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a .previous directory does not stop adopt from starting", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-prev-dir-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["dir-live"]);
+  mkdirSync(`${live}.previous`);
+  writeFileSync(join(`${live}.previous`, "junk"), "nope");
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(visitorCount(live)).toBe(1);
+  expect(lstatSync(`${live}.previous`).isDirectory()).toBe(true);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a .previous directory does not block a successful adopt", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-prev-dir-swap-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["before"]);
+  mkdirSync(`${live}.previous`);
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["after-1", "after-2"]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
+  expect(visitorCount(live)).toBe(2);
+  expect(lstatSync(`${live}.previous`).isDirectory()).toBe(true);
+  const gens = generations(live);
+  expect(gens).toHaveLength(1);
+  expect(basename(gens[0]!)).toMatch(/^prism\.db\.previous\.\d+$/);
+  expect(visitorCount(gens[0]!)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("boot fallback restores the newest generation when live cannot boot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-fallback-"));
+  const live = join(dir, "prism.db");
+  writeWrongColumns(live, [1]);
+  writeBootable(`${live}.previous.100`, ["stale"]);
+  writeBootable(`${live}.previous.900`, ["newest"]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toMatch(/live database failed boot/i);
+  expect(result.stderr).toContain(`${live}.previous.900`);
+  const db = openDatabase(live);
+  const row = db.query("SELECT id FROM visitors").get() as { id: string };
+  db.close();
+  expect(row.id).toBe("newest");
+  expect(visitorCount(`${live}.previous.900`)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });

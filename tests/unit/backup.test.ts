@@ -43,9 +43,9 @@ const storage = {
   S3_SECRET_ACCESS_KEY: "drill-secret",
 };
 
-test("backup.ts does not import db, server, seed, or access", () => {
+test("backup.ts does not import db, open-db, server, seed, or access", () => {
   const source = readFileSync(join(repo, "src/backup.ts"), "utf8");
-  for (const name of ["db", "server", "seed", "access"]) {
+  for (const name of ["db", "open-db", "server", "seed", "access"]) {
     expect(source).not.toMatch(new RegExp(String.raw`(?:from|import\(|require\()\s*["']\./${name}(?:\.ts)?["']`));
   }
 });
@@ -146,6 +146,22 @@ test("snapshot --day rejects a calendar date that does not exist", async () => {
   const result = await runCli(["snapshot", "--day", "2026-02-31"], baseEnv());
   expect(result.code, result.stderr).toBe(1);
   expect(result.stdout).toBe('{"ok":false,"error":"--day must be YYYY-MM-DD"}\n');
+});
+
+test("snapshot --day in the future fails before touching storage", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-backup-future-day-"));
+  const dbPath = join(dir, "live.sqlite");
+  const db = new Database(dbPath);
+  db.exec("CREATE TABLE visitors (id INTEGER PRIMARY KEY)");
+  db.run("INSERT INTO visitors (id) VALUES (1)");
+  db.close();
+  const result = await runCli(
+    ["snapshot", "--day", "2099-01-01"],
+    baseEnv({ ...storage, DB_PATH: dbPath }),
+  );
+  expect(result.code, result.stderr).toBe(1);
+  expect(result.stdout).toBe('{"ok":false,"error":"--day must not be in the future"}\n');
+  expect(existsSync(dbPath)).toBe(true);
 });
 
 test("a configured snapshot of a missing database reports SQLite and does not upload", async () => {

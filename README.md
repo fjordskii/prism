@@ -76,7 +76,7 @@ fly ssh console -a prism-personalize -C \
 fly machine restart -a prism-personalize
 ```
 
-Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous`), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. A stray, empty, or schema-less `/data/prism.restore` is moved to `/data/prism.restore.rejected` and the server starts. The previous live file stays at `prism.db.previous` until a later adopt replaces it.
+Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous` and timestamped generations), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. `adopt` proves a candidate by booting the app's DB init on a copy; an empty, corrupt, schema-less, or wrong-column file is moved to `/data/prism.restore.rejected` and live is left untouched. A successful swap keeps the displaced live file at `prism.db.previous.<timestamp>` (last three). `--day` in the future is refused so retention cannot prune real objects.
 
 The MinIO drill is `tests/drill/backup-restore.test.ts`. It is not part of `tests/unit`, so a MinIO failure does not block deploy.
 

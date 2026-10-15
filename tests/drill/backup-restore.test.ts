@@ -225,3 +225,27 @@ test.serial(
   },
   { timeout: 120_000 },
 );
+
+test.serial(
+  "snapshot --day in the future does not prune stored dailies",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prism-drill-future-"));
+    const live = join(dir, "shop.sqlite");
+    writeShop(live);
+    const env = childEnv(live);
+    await emptyDaily(env);
+
+    const snap = await runCli(["snapshot", "--day", "2026-06-15"], env);
+    expect(snap.code, snap.stderr).toBe(0);
+    const key = "prism/daily/2026-06-15.sqlite.gz";
+    const before = await storedGzip(env, key);
+
+    const future = await runCli(["snapshot", "--day", "2099-01-01"], env);
+    expect(future.code, future.stderr).toBe(1);
+    expect(future.stdout).toBe('{"ok":false,"error":"--day must not be in the future"}\n');
+
+    const after = await storedGzip(env, key);
+    expect(after).toEqual(before);
+  },
+  { timeout: 30_000 },
+);
