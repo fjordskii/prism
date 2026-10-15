@@ -76,7 +76,7 @@ test("adopt swaps prism.restore onto the live path and removes wal sidecars", as
   expect(existsSync(`${live}.previous`)).toBe(false);
 });
 
-test("a pending file that is not a database does not move the live file", async () => {
+test("a pending file that is not a database is moved aside and the live file stays", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-bad-"));
   const live = join(dir, "prism.db");
   writeVisitors(live, [1, 2, 3, 4]);
@@ -85,10 +85,12 @@ test("a pending file that is not a database does not move the live file", async 
   writeFileSync(pending, "not a database");
 
   const result = await runAdopt(live);
-  expect(result.code, result.stderr).toBe(1);
-  expect(result.stdout).toBe('{"ok":false,"error":"SQLITE_NOTADB: file is not a database"}\n');
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toContain("adopt: moved stray restore aside to ");
   expect(readFileSync(live)).toEqual(before);
-  expect(existsSync(pending)).toBe(true);
+  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(true);
   expect(existsSync(`${live}.previous`)).toBe(false);
   expect(visitorCount(live)).toBe(4);
 });
@@ -117,11 +119,13 @@ test("adopt puts the previous database back when the aside file is not a databas
   writeFileSync(join(dir, "prism.restore"), "not a database");
 
   const result = await runAdopt(live);
-  expect(result.code, result.stderr).toBe(1);
-  expect(result.stdout).toBe('{"ok":false,"error":"SQLITE_NOTADB: file is not a database"}\n');
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toContain("adopt: moved stray restore aside to ");
   expect(visitorCount(live)).toBe(3);
   expect(existsSync(`${live}.previous`)).toBe(false);
-  expect(existsSync(join(dir, "prism.restore"))).toBe(true);
+  expect(existsSync(join(dir, "prism.restore"))).toBe(false);
+  expect(existsSync(join(dir, "prism.restore.rejected"))).toBe(true);
 });
 
 test("adopt puts the previous database back when the pending file is gone", async () => {

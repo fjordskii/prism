@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBackupRequest } from "../../src/backup";
@@ -93,14 +93,14 @@ test("whitespace-only S3 env is the same skip", async () => {
   expect(result.stdout).toBe(MISSING);
 });
 
-test("a valid endpoint with the other storage fields unset still skips", async () => {
+test("a valid endpoint with the other storage fields unset fails", async () => {
   const result = await runCli(
     ["snapshot", "--day", "2026-10-15"],
     baseEnv({ S3_ENDPOINT: "http://127.0.0.1:9", DB_PATH: join(tmpdir(), "absent.sqlite") }),
   );
-  expect(result.code, result.stderr).toBe(0);
+  expect(result.code, result.stderr).toBe(1);
   expect(result.stdout).toBe(
-    '{"ok":true,"skipped":true,"reason":"missing S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"}\n',
+    '{"ok":false,"error":"missing S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"}\n',
   );
 });
 
@@ -177,6 +177,73 @@ test("restore refuses to write DB_PATH", async () => {
   expect(result.code, result.stderr).toBe(1);
   expect(result.stdout).toBe('{"ok":false,"error":"refusing to write DB_PATH"}\n');
   expect(readFileSync(live, "utf8")).toBe("keep");
+});
+
+test("restore refuses live sidecars, a hardlink, a symlink, and PRISM.DB", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-backup-family-"));
+  const live = join(dir, "live.sqlite");
+  writeFileSync(live, "keep");
+  const env = baseEnv({ ...storage, DB_PATH: live });
+
+  for (const suffix of ["-wal", "-shm", "-journal", ".previous"]) {
+    const target = `${live}${suffix}`;
+    writeFileSync(target, "sidecar");
+    const result = await runCli(["restore", "--to", target], env);
+    expect(result.code, `${suffix}\n${result.stderr}`).toBe(1);
+    expect(result.stdout).toBe('{"ok":false,"error":"refusing to write a live database file"}\n');
+    expect(readFileSync(target, "utf8")).toBe("sidecar");
+  }
+
+  const foldedWal = join(dir, "LIVE.SQLITE-WAL");
+  writeFileSync(foldedWal, "folded");
+  const folded = await runCli(["restore", "--to", foldedWal], env);
+  expect(folded.code, folded.stderr).toBe(1);
+  expect(folded.stdout).toBe('{"ok":false,"error":"refusing to write a live database file"}\n');
+  expect(readFileSync(foldedWal, "utf8")).toBe("folded");
+
+  const linked = join(dir, "alias.sqlite");
+  linkSync(live, linked);
+  const hard = await runCli(["restore", "--to", linked], env);
+  expect(hard.code, hard.stderr).toBe(1);
+  expect(hard.stdout).toBe('{"ok":false,"error":"refusing to write DB_PATH"}\n');
+  expect(readFileSync(live, "utf8")).toBe("keep");
+
+  const named = join(dir, "other.sqlite");
+  symlinkSync(live, named);
+  const sym = await runCli(["restore", "--to", named], env);
+  expect(sym.code, sym.stderr).toBe(1);
+  expect(sym.stdout).toBe('{"ok":false,"error":"refusing to write DB_PATH"}\n');
+  expect(readFileSync(live, "utf8")).toBe("keep");
+
+  const cased = join(dir, "PRISM.DB");
+  writeFileSync(cased, "keep-case");
+  const byName = await runCli(["restore", "--to", cased], env);
+  expect(byName.code, byName.stderr).toBe(1);
+  expect(byName.stdout).toBe('{"ok":false,"error":"refusing to write prism.db"}\n');
+  expect(readFileSync(cased, "utf8")).toBe("keep-case");
+});
+
+test("restore to the live WAL refuses and leaves a writer-held database readable", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-backup-wal-"));
+  const live = join(dir, "prism.db");
+  const db = new Database(live);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA wal_autocheckpoint = 0");
+  db.exec("CREATE TABLE visitors (id INTEGER PRIMARY KEY)");
+  db.run("INSERT INTO visitors (id) VALUES (1)");
+  expect(existsSync(`${live}-wal`)).toBe(true);
+
+  const result = await runCli(
+    ["restore", "--to", `${live}-wal`],
+    baseEnv({ ...storage, DB_PATH: live }),
+  );
+  expect(result.code, result.stderr).toBe(1);
+  expect(result.stdout).toBe('{"ok":false,"error":"refusing to write a live database file"}\n');
+
+  const fresh = new Database(live);
+  expect(fresh.query("SELECT COUNT(*) AS n FROM visitors").get()).toEqual({ n: 1 });
+  fresh.close();
+  db.close();
 });
 
 test("restore refuses a target named prism.db", async () => {
@@ -290,4 +357,44 @@ test("a matching token with no S3 env returns the skip receipt", async () => {
     skipped: true,
     reason: "missing S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY",
   });
+});
+
+test("a matching token with a partial S3 config is HTTP 500", async () => {
+  const response = await handleBackupRequest(
+    new Request("http://127.0.0.1/internal/backup", {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+    }),
+    baseEnv({ BACKUP_TOKEN: "secret", S3_ENDPOINT: "http://127.0.0.1:9" }),
+    new Date("2026-10-15T08:15:00.000Z"),
+  );
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({
+    ok: false,
+    error: "missing S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY",
+  });
+});
+
+test("two concurrent POSTs each own a readable 200 body", async () => {
+  const env = baseEnv({ BACKUP_TOKEN: "secret" });
+  const now = new Date("2026-10-15T08:15:00.000Z");
+  const request = () =>
+    handleBackupRequest(
+      new Request("http://127.0.0.1/internal/backup", {
+        method: "POST",
+        headers: { authorization: "Bearer secret" },
+      }),
+      env,
+      now,
+    );
+  const [first, second] = await Promise.all([request(), request()]);
+  expect(first.status).toBe(200);
+  expect(second.status).toBe(200);
+  const skip = {
+    ok: true,
+    skipped: true,
+    reason: "missing S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY",
+  };
+  expect(await first.json()).toEqual(skip);
+  expect(await second.json()).toEqual(skip);
 });
