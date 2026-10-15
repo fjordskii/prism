@@ -6,6 +6,17 @@ if (path === undefined || path === "") {
 }
 process.env.DB_PATH = path;
 
+const hang = process.env.PRISM_PROVE_HANG === "1";
+const delayMs = Number(process.env.PRISM_PROVE_DELAY_MS ?? "");
+if (hang || (Number.isFinite(delayMs) && delayMs > 0)) {
+  process.on("SIGTERM", () => {});
+}
+if (hang) {
+  await Bun.sleep(3_600_000);
+  process.exit(2);
+}
+if (Number.isFinite(delayMs) && delayMs > 0) await Bun.sleep(delayMs);
+
 const { db } = await import("./db");
 await import("./access");
 await import("./auth");

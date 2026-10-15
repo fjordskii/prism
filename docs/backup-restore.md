@@ -33,6 +33,6 @@ Any failure before the candidate is fully proven — copy, disk full, open, migr
 
 The displaced live file is checkpointed (`PRAGMA wal_checkpoint(TRUNCATE)`) or moved with its `-wal`/`-shm` sidecars, then kept as `/data/prism.db.previous.<timestamp>`. Adopt keeps the newest three of those generations, ordered by the timestamp in the filename. A rejected candidate does not touch them, including when `prism.restore` is a symlink to `prism.db`. A `.previous` path that is a directory is skipped and does not stop the server.
 
-If the first boot after an adopt cannot open the new live file, adopt restores the newest generation, logs that on stderr, and the server starts on the restored copy. A prove copy that runs out of disk does not count as "cannot open".
+If the first boot after an adopt cannot open the new live file, adopt tries every generation from newest to oldest (ordered by the timestamp in the filename), logs each attempt on stderr, and the server starts on the first copy that boots. A prove copy that runs out of disk does not count as "cannot open". If no generation can boot, adopt exits 1 so seed cannot create an empty database while a generation or quarantined file is still on the volume.
 
 There is no HTTP restore. `BACKUP_TOKEN` cannot write a file onto the volume.

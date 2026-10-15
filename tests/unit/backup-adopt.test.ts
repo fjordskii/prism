@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { uniqueAside } from "../../src/backup";
 import { openDatabase } from "../../src/open-db";
 
 const repo = join(import.meta.dir, "../..");
@@ -640,4 +641,140 @@ test("a full data volume during prove leaves live and pending untouched", async 
   } finally {
     unmountTmpfs(volume);
   }
+}, { timeout: ADOPT_TIMEOUT });
+
+test("fallback walks every generation newest-to-oldest by stamp, not mtime", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-walk-gens-"));
+  const live = join(dir, "prism.db");
+  writeFileSync(live, "garbage".repeat(500));
+  writeFileSync(`${live}.previous.1792000000001`, "garbage".repeat(500));
+  writeBootable(`${live}.previous.1792000000000`, ["keep-9312"]);
+  writeFileSync(`${live}.previous.1791999999999`, "garbage".repeat(500));
+  const now = Date.now() / 1000;
+  utimesSync(live, now, now);
+  utimesSync(`${live}.previous.1792000000001`, now - 7200, now - 7200);
+  utimesSync(`${live}.previous.1792000000000`, now - 3600, now - 3600);
+  utimesSync(`${live}.previous.1791999999999`, now - 1800, now - 1800);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: false });
+  expect(result.stderr).toContain(`${live}.previous.1792000000001`);
+  expect(result.stderr).toContain(`${live}.previous.1792000000000`);
+  expect(visitorId(live)).toBe("keep-9312");
+  expect(visitorCount(`${live}.previous.1792000000000`)).toBe(1);
+  expect(existsSync(`${live}.previous.1792000000001`)).toBe(true);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("when live and every generation are corrupt, adopt fails so seed cannot create an empty DB", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-all-corrupt-"));
+  const live = join(dir, "prism.db");
+  writeFileSync(live, "garbage".repeat(500));
+  writeFileSync(`${live}.previous.1792000000001`, "garbage".repeat(500));
+  writeFileSync(`${live}.previous.1792000000000`, "garbage".repeat(500));
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout).ok).toBe(false);
+  expect(String(JSON.parse(result.stdout).error)).toMatch(/refusing to seed|no bootable generation/i);
+  expect(existsSync(live)).toBe(false);
+  expect(existsSync(`${live}.previous.1792000000000`)).toBe(true);
+  expect(existsSync(`${live}.previous.1792000000001`)).toBe(true);
+  expect(readdirSync(dir).some((name) => name.includes("unbootable") || name.includes("rejected"))).toBe(true);
+
+  // Boot is `adopt && seed && server`. Seed must not run after this exit.
+  if (result.code === 0) {
+    const seed = Bun.spawn(["bun", "src/seed.ts"], {
+      cwd: repo,
+      env: baseEnv(live),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await seed.exited;
+  }
+  expect(existsSync(live)).toBe(false);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a proof that finishes after the timeout is ignored and does not swap live", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-stale-prove-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["candidate"]);
+  const started = Date.now();
+
+  const result = await runAdopt(live, {
+    PRISM_PROVE_DELAY_MS: "800",
+    PRISM_PROVE_TIMEOUT_MS: "80",
+    PRISM_PROVE_KILL_GRACE_MS: "5000",
+  });
+  expect(Date.now() - started).toBeLessThan(4000);
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout).ok).toBe(false);
+  expect(String(JSON.parse(result.stdout).error)).toMatch(/timed out/i);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(existsSync(pending)).toBe(true);
+  expect(visitorId(pending)).toBe("candidate");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(generations(live)).toEqual([]);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a proof that ignores SIGTERM is SIGKILL'd and live is not demoted", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-prove-kill-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  writeBootable(`${live}.previous.80`, ["keep-gen"]);
+  const started = Date.now();
+
+  const result = await runAdopt(live, {
+    PRISM_PROVE_HANG: "1",
+    PRISM_PROVE_TIMEOUT_MS: "120",
+    PRISM_PROVE_KILL_GRACE_MS: "80",
+  });
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: false });
+  expect(result.stderr).toMatch(/timed out|deferred/i);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(visitorId(`${live}.previous.80`)).toBe("keep-gen");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(existsSync(`${live}.previous.80`)).toBe(true);
+}, { timeout: 15_000 });
+
+test("uniqueAside never returns a path that already exists", () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-unique-aside-"));
+  const path = join(dir, "prism.db");
+  writeFileSync(path, "live");
+  writeFileSync(`${path}.unbootable`, "keep-base");
+  const t0 = Date.now() - 200;
+  for (let t = t0; t < t0 + 4000; t++) writeFileSync(`${path}.unbootable.${t}`, `keep-${t}`);
+
+  const dest = uniqueAside(path, "unbootable");
+  expect(dest).not.toBe(`${path}.unbootable`);
+  expect(existsSync(dest)).toBe(false);
+  expect(dest.startsWith(`${path}.unbootable.`)).toBe(true);
+  expect(readFileSync(`${path}.unbootable`, "utf8")).toBe("keep-base");
+  writeFileSync(dest, "new");
+  expect(readFileSync(`${path}.unbootable`, "utf8")).toBe("keep-base");
+  expect(readFileSync(`${path}.unbootable.${t0 + 100}`, "utf8")).toBe(`keep-${t0 + 100}`);
+});
+
+test("quarantine during fallback does not overwrite an existing unbootable file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-unbootable-collide-"));
+  const live = join(dir, "prism.db");
+  writeWrongColumns(live, [1]);
+  writeBootable(`${live}.previous.90`, ["safe"]);
+  writeFileSync(`${live}.unbootable`, "keep-me");
+  const t0 = Date.now() - 100;
+  for (let t = t0; t < t0 + 2500; t++) writeFileSync(`${live}.unbootable.${t}`, `keep-${t}`);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(visitorId(live)).toBe("safe");
+  expect(readFileSync(`${live}.unbootable`, "utf8")).toBe("keep-me");
+  for (let t = t0; t < t0 + 2500; t++) {
+    expect(readFileSync(`${live}.unbootable.${t}`, "utf8")).toBe(`keep-${t}`);
+  }
+  const extras = readdirSync(dir).filter((name) => name === "prism.db.unbootable" || name.startsWith("prism.db.unbootable."));
+  expect(extras.length).toBeGreaterThan(2501);
 }, { timeout: ADOPT_TIMEOUT });

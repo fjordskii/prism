@@ -66,6 +66,7 @@ const DAILY_KEY = /^prism\/daily\/(\d{4}-\d{2}-\d{2})\.sqlite\.gz$/;
 const GZIP_CAP = 32 * 1024 * 1024;
 const BUSY_TIMEOUT_MS = 8000;
 const PROVE_TIMEOUT_MS = 60_000;
+const PROVE_KILL_GRACE_MS = 2_000;
 const GENERATION_KEEP = 3;
 const PREFIX = "prism/daily/";
 const LIVE_SIDECARS = ["-wal", "-shm", "-journal", ".previous"] as const;
@@ -539,10 +540,14 @@ function pendingPath(dbPath: string): string {
   return join(dirname(dbPath), "prism.restore");
 }
 
-function uniqueAside(path: string, label: string): string {
-  let dest = `${path}.${label}`;
-  if (statExists(dest)) dest = `${path}.${label}.${Date.now()}`;
-  return dest;
+export function uniqueAside(path: string, label: string): string {
+  const first = `${path}.${label}`;
+  if (!statExists(first)) return first;
+  for (let n = 0; n < 10_000; n++) {
+    const dest = `${path}.${label}.${Date.now()}.${process.pid}.${n}`;
+    if (!statExists(dest)) return dest;
+  }
+  throw new Error(`could not allocate a ${label} path`);
 }
 
 function moveSidecars(from: string, to: string): void {
@@ -609,10 +614,6 @@ function listGenerations(live: string): string[] {
   }
   found.sort((a, b) => b.stamp - a.stamp || b.path.localeCompare(a.path));
   return found.map((row) => row.path);
-}
-
-function newestGeneration(live: string): string | undefined {
-  return listGenerations(live)[0];
 }
 
 function pruneGenerations(live: string): void {
@@ -722,7 +723,18 @@ function proveEnv(dbPath: string): Record<string, string> {
   return out;
 }
 
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+let proveEpoch = 0;
+
 async function runProveBoot(dbPath: string): Promise<ProveResult> {
+  const epoch = ++proveEpoch;
+  const aborted = { value: false };
   const script = join(dirname(fileURLToPath(import.meta.url)), "prove-boot.ts");
   const child = Bun.spawn([process.execPath, script, dbPath], {
     cwd: dirname(dirname(script)),
@@ -731,29 +743,46 @@ async function runProveBoot(dbPath: string): Promise<ProveResult> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  let timedOut = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMs = envMs("PRISM_PROVE_TIMEOUT_MS", PROVE_TIMEOUT_MS);
+  const graceMs = envMs("PRISM_PROVE_KILL_GRACE_MS", PROVE_KILL_GRACE_MS);
   const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill();
-  }, PROVE_TIMEOUT_MS);
+    aborted.value = true;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Child may already have exited.
+    }
+    killTimer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Child may already have exited.
+      }
+    }, graceMs);
+  }, timeoutMs);
   try {
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
       child.exited,
     ]);
+    if (aborted.value || epoch !== proveEpoch) {
+      return { ok: false, kind: "env", error: "prove-boot timed out" };
+    }
     if (code === 0) return { ok: true };
     const text = `${stderr}\n${stdout}`.replace(/\s+/g, " ").trim();
     const error = text === "" ? "prove-boot failed" : text.slice(0, 500);
     if (
-      timedOut || code === null || code < 0 || code === 137 || code === 143
+      code === null || code < 0 || code === 137 || code === 143
       || /ENOSPC|EDQUOT|ENOMEM|no space left|disk I\/O error|SQLITE_FULL|SQLITE_IOERR|SQLITE_NOMEM|killed|timed out/i.test(error)
     ) {
-      return { ok: false, kind: "env", error: timedOut ? `prove-boot timed out: ${error}` : error };
+      return { ok: false, kind: "env", error };
     }
     return { ok: false, kind: "invalid", error };
   } finally {
     clearTimeout(timer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
   }
 }
 
@@ -803,6 +832,50 @@ async function restoreGeneration(live: string, gen: string): Promise<boolean> {
   return false;
 }
 
+function isQuarantineName(live: string, name: string): boolean {
+  const base = basename(live);
+  return (
+    name === `${base}.unbootable` || name.startsWith(`${base}.unbootable.`)
+    || name === `${base}.rejected` || name.startsWith(`${base}.rejected.`)
+    || name === `${base}.partial` || name.startsWith(`${base}.partial.`)
+    || name === "prism.restore.rejected" || name.startsWith("prism.restore.rejected.")
+  );
+}
+
+function leftoverPaths(live: string): string[] {
+  const dir = dirname(live);
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const name of names) {
+    if (!isGenerationName(live, name) && !isQuarantineName(live, name)) continue;
+    const path = join(dir, name);
+    try {
+      if (!lstatSync(path).isFile()) continue;
+    } catch {
+      continue;
+    }
+    found.push(path);
+  }
+  return found;
+}
+
+async function restoreFromGenerations(live: string): Promise<boolean> {
+  for (const gen of listGenerations(live)) {
+    process.stderr.write(`adopt: restoring ${gen}\n`);
+    if (await restoreGeneration(live, gen)) return true;
+  }
+  return false;
+}
+
+function refuseSeed(): never {
+  throw new Error("no bootable generation; refusing to seed");
+}
+
 async function ensureLive(live: string): Promise<void> {
   if (isRegularFile(live)) {
     const proved = await proveCandidate(live);
@@ -811,28 +884,28 @@ async function ensureLive(live: string): Promise<void> {
       process.stderr.write(`adopt: prove of live deferred (${proved.error}); leaving live in place\n`);
       return;
     }
-    const gen = newestGeneration(live);
+    const gens = listGenerations(live);
     process.stderr.write(
-      `adopt: live database failed boot${gen === undefined ? "" : `; restoring ${gen}`}: ${proved.error}\n`,
+      `adopt: live database failed boot${gens.length === 0 ? "" : "; restoring from generations"}: ${proved.error}\n`,
     );
-    if (gen === undefined) return;
+    if (gens.length === 0) return;
     const aside = quarantineLive(live);
     try {
-      if (!(await restoreGeneration(live, gen))) {
-        process.stderr.write(`adopt: newest generation also failed boot: ${gen}\n`);
-      }
+      if (await restoreFromGenerations(live)) return;
+      process.stderr.write("adopt: no generation could boot\n");
     } catch (err) {
-      undoDisplace(live, aside);
+      if (!isRegularFile(live) && isRegularFile(aside)) undoDisplace(live, aside);
       throw err;
     }
+    refuseSeed();
+  }
+  if (listGenerations(live).length === 0) {
+    if (leftoverPaths(live).length > 0) refuseSeed();
     return;
   }
-  const gen = newestGeneration(live);
-  if (gen === undefined) return;
-  process.stderr.write(`adopt: live database missing; restoring ${gen}\n`);
-  if (!(await restoreGeneration(live, gen))) {
-    process.stderr.write(`adopt: newest generation failed boot: ${gen}\n`);
-  }
+  process.stderr.write("adopt: live database missing; restoring from generations\n");
+  if (await restoreFromGenerations(live)) return;
+  refuseSeed();
 }
 
 function undoDisplace(live: string, gen: string): void {
@@ -892,10 +965,9 @@ async function adoptPending(dbPath: string): Promise<AdoptResult> {
     process.stderr.write(`adopt: prove of swapped live deferred (${liveOk.error}); leaving swapped file in place\n`);
     return { ok: true, adopted: true, path: dbPath };
   }
-  process.stderr.write(`adopt: swapped database failed boot; restoring newest generation: ${liveOk.error}\n`);
+  process.stderr.write(`adopt: swapped database failed boot; restoring from generations: ${liveOk.error}\n`);
   quarantineLive(dbPath);
-  const gen = newestGeneration(dbPath);
-  if (gen !== undefined) await restoreGeneration(dbPath, gen);
+  if (!(await restoreFromGenerations(dbPath))) refuseSeed();
   return { ok: true, adopted: false };
 }
 
