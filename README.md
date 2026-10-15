@@ -75,7 +75,7 @@ fly ssh console -a prism-personalize -C \
   "bun src/backup.ts restore --date 2026-10-14 --to /data/prism-restored.sqlite"
 ```
 
-Omit `--date` to restore the newest object. Success JSON includes `"integrity":"ok"` and `"boot":"ok"`. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous` and timestamped generations), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. After the CLI writes the new file, stop the machine, keep `/data/prism.db` as a dated copy, move the verified file in, and start. `--day` in the future is refused so retention cannot prune real objects.
+Omit `--date` to restore the newest object. Success JSON includes `"integrity":"ok"` and `"boot":"ok"`. An empty or schema-less snapshot is refused. `restore` refuses `--to` when that path is the live database or a side file (`-wal`, `-shm`, `-journal`, `.previous` and timestamped generations), including after symlink and hardlink resolution and a case-insensitive match. A dangling symlink whose target is one of those side files is also refused. It also refuses a file named `prism.db`. After the CLI writes the new file, stop the machine, `keep` the live database with `VACUUM INTO` (so WAL rows are in the dated copy), move the verified file in, and start. Never copy `prism.db` without its WAL and then delete the WAL. `--day` in the future is refused so retention cannot prune real objects.
 
 The MinIO drill is `tests/drill/backup-restore.test.ts`. It is not part of `tests/unit`, so a MinIO failure does not block deploy.
 

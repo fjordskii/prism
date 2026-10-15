@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBackupRequest, proveStartup } from "../../src/backup";
@@ -537,3 +537,111 @@ test("proveStartup rejects a database whose pilot_inquiries columns do not match
   if (result.ok) throw new Error("expected proveStartup to fail");
   expect(result.error).toMatch(/store_url|no such column/i);
 }, { timeout: 60_000 });
+
+test("proveStartup rejects an empty file", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "prism-prove-empty-")), "empty.sqlite");
+  writeFileSync(path, "");
+  const result = await proveStartup(path, baseEnv({ DB_PATH: path }));
+  expect(result).toEqual({ ok: false, error: "empty database" });
+});
+
+test("proveStartup rejects a schema-less database", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "prism-prove-schemaless-")), "notes.sqlite");
+  const db = new Database(path);
+  db.exec("PRAGMA user_version = 1");
+  db.exec("CREATE TABLE notes (x TEXT)");
+  db.close();
+  const result = await proveStartup(path, baseEnv({ DB_PATH: path }));
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected proveStartup to fail");
+  expect(result.error).toBe("missing schema: visitors, variants, events, sites");
+});
+
+test("keep after a hard stop preserves WAL-only committed rows", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-keep-wal-"));
+  const live = join(dir, "prism.db");
+  await writeViaDb(live);
+  const script = `
+    import { Database } from "bun:sqlite";
+    const db = new Database(${JSON.stringify(live)});
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA wal_autocheckpoint = 0");
+    const now = Date.now();
+    for (const n of [1, 2, 3]) {
+      db.run(
+        "INSERT INTO pilot_inquiries (email, store_url, monthly_visitors, note, created_at) VALUES (?, ?, ?, ?, ?)",
+        \`row-\${n}@shop.example\`,
+        "https://shop.example",
+        "1000",
+        "keep-me",
+        now,
+      );
+    }
+    process.stdout.write("open\\n");
+    await new Promise(() => {});
+  `;
+  const writer = Bun.spawn([process.execPath, "-e", script], {
+    cwd: repo,
+    env: baseEnv({ DB_PATH: live }),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const reader = writer.stdout.getReader();
+  const decoder = new TextDecoder();
+  let banner = "";
+  while (!banner.includes("open\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      const stderr = await new Response(writer.stderr).text();
+      throw new Error(`writer exited before open\n${stderr}`);
+    }
+    banner += decoder.decode(chunk.value, { stream: true });
+  }
+  writer.kill("SIGKILL");
+  await writer.exited;
+  expect(existsSync(`${live}-wal`)).toBe(true);
+
+  const withWal = new Database(live, { readonly: true });
+  expect(withWal.query("SELECT COUNT(*) AS n FROM pilot_inquiries").get()).toEqual({ n: 3 });
+  withWal.close();
+
+  const copiedMain = join(dir, "copied-main.sqlite");
+  copyFileSync(live, copiedMain);
+  const withoutWal = new Database(copiedMain, { readonly: true });
+  expect(withoutWal.query("SELECT COUNT(*) AS n FROM pilot_inquiries").get()).toEqual({ n: 0 });
+  withoutWal.close();
+
+  const kept = join(dir, "prism.db.2026-10-15");
+  const result = await runCli(["keep", "--to", kept], baseEnv({ DB_PATH: live }));
+  expect(result.code, result.stderr).toBe(0);
+  const body = JSON.parse(result.stdout) as { ok: boolean; path: string; counts: Record<string, number> };
+  expect(body.ok).toBe(true);
+  expect(body.path).toBe(kept);
+  expect(body.counts.pilot_inquiries).toBe(3);
+  expect(existsSync(`${live}-wal`)).toBe(true);
+
+  const keptDb = new Database(kept, { readonly: true });
+  expect(keptDb.query("SELECT COUNT(*) AS n FROM pilot_inquiries").get()).toEqual({ n: 3 });
+  keptDb.close();
+
+  const restored = join(dir, "prism-restored.sqlite");
+  copyFileSync(kept, restored);
+  const swapped = join(dir, "after-swap.sqlite");
+  copyFileSync(restored, swapped);
+  unlinkSync(`${live}-wal`);
+  if (existsSync(`${live}-shm`)) unlinkSync(`${live}-shm`);
+  const afterKeep = new Database(kept, { readonly: true });
+  expect(afterKeep.query("SELECT COUNT(*) AS n FROM pilot_inquiries").get()).toEqual({ n: 3 });
+  afterKeep.close();
+}, { timeout: 30_000 });
+
+test("keep refuses to write DB_PATH", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-keep-refuse-"));
+  const live = join(dir, "live.sqlite");
+  writeFileSync(live, "keep");
+  const result = await runCli(["keep", "--to", live], baseEnv({ DB_PATH: live }));
+  expect(result.code, result.stderr).toBe(1);
+  expect(result.stdout).toBe('{"ok":false,"error":"refusing to write DB_PATH"}\n');
+  expect(readFileSync(live, "utf8")).toBe("keep");
+});

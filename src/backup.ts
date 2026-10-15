@@ -46,7 +46,18 @@ export type RestoreResult =
     }
   | { ok: false; error: string };
 
-type CliResult = SnapshotResult | RestoreResult;
+export type KeepResult =
+  | { ok: true; path: string; counts: Record<string, number> }
+  | { ok: false; error: string };
+
+type CliResult = SnapshotResult | RestoreResult | KeepResult;
+
+const REQUIRED_SCHEMA: Readonly<Record<string, readonly string[]>> = {
+  visitors: ["id", "site", "first_seen", "last_seen", "visits"],
+  variants: ["id", "site", "name", "selector", "ops", "audience", "created_at"],
+  events: ["id", "site", "visitor_id", "variant_id", "selector", "type", "ts"],
+  sites: ["site", "plan", "created_at"],
+};
 
 const STORAGE_FIELDS = ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
 const TIGRIS_HOSTS = new Set(["t3.storage.dev", "fly.storage.tigris.dev"]);
@@ -224,6 +235,38 @@ function integrityOf(path: string): string {
     }
     if (messages.length === 1 && messages[0] === "ok") return "ok";
     return messages.join("; ") || "empty";
+  } finally {
+    db.close();
+  }
+}
+
+export function schemaError(path: string): string | undefined {
+  try {
+    if (statSync(path).size === 0) return "empty database";
+  } catch (err) {
+    return errorMessage(err);
+  }
+  let db: Database;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch (err) {
+    return errorMessage(err);
+  }
+  try {
+    const missing: string[] = [];
+    for (const [table, cols] of Object.entries(REQUIRED_SCHEMA)) {
+      const info = db.query(`PRAGMA table_info(${quoteIdent(table)})`).all() as { name: string }[];
+      if (info.length === 0) {
+        missing.push(table);
+        continue;
+      }
+      const have = new Set(info.map((col) => col.name));
+      for (const col of cols) {
+        if (!have.has(col)) missing.push(`${table}.${col}`);
+      }
+    }
+    if (missing.length > 0) return `missing schema: ${missing.join(", ")}`;
+    return undefined;
   } finally {
     db.close();
   }
@@ -443,6 +486,8 @@ function proveEnv(env: typeof process.env, dbPath: string): Record<string, strin
 }
 
 export async function proveStartup(dbPath: string, env: typeof process.env = process.env): Promise<{ ok: true } | { ok: false; error: string }> {
+  const schema = schemaError(dbPath);
+  if (schema !== undefined) return { ok: false, error: schema };
   const script = join(dirname(fileURLToPath(import.meta.url)), "prove-boot.ts");
   const child = Bun.spawn([process.execPath, script, dbPath], {
     cwd: dirname(dirname(script)),
@@ -518,6 +563,8 @@ export async function restore(input: {
     await Bun.write(sqlitePath, raw);
     const integrity = integrityOf(sqlitePath);
     if (integrity !== "ok") return { ok: false, error: `integrity_check returned ${integrity}` };
+    const schema = schemaError(sqlitePath);
+    if (schema !== undefined) return { ok: false, error: schema };
     const counts = tableCounts(sqlitePath);
     const proveCopy = join(work, "prove.sqlite");
     copyFileSync(sqlitePath, proveCopy);
@@ -580,6 +627,23 @@ async function runSnapshotChild(env: typeof process.env, day: string): Promise<S
     new Response(child.stderr).text(),
   ]);
   return { status: code === 0 ? 200 : 500, body: childBody(stdout) };
+}
+
+export function keep(input: {
+  env: typeof process.env;
+  dbPath: string;
+  to: string;
+}): KeepResult {
+  const refused = refuseTarget(input.to, input.env);
+  if (refused) return { ok: false, error: refused };
+  if (statExists(input.to)) return { ok: false, error: "keep destination already exists" };
+  try {
+    mkdirSync(dirname(resolve(input.to)), { recursive: true });
+    vacuumInto(input.dbPath, input.to);
+    return { ok: true, path: input.to, counts: tableCounts(input.to) };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) };
+  }
 }
 
 export function handleBackupRequest(req: Request, env: typeof process.env, now: Date): Promise<Response> {
@@ -646,6 +710,16 @@ async function main(argv: readonly string[], env: typeof process.env): Promise<n
       return 1;
     }
     const result = await restore({ env, date: dateFlag === undefined ? null : dateFlag, to });
+    writeResult(result);
+    return result.ok ? 0 : 1;
+  }
+  if (command === "keep") {
+    const to = flag(argv, "--to");
+    if (to === undefined || to === "") {
+      writeResult({ ok: false, error: "keep requires --to" });
+      return 1;
+    }
+    const result = keep({ env, dbPath: env.DB_PATH || "prism.db", to });
     writeResult(result);
     return result.ok ? 0 : 1;
   }

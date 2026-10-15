@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -249,6 +249,78 @@ test.serial(
     expect(existsSync(restored)).toBe(false);
   },
   { timeout: 120_000 },
+);
+
+test.serial(
+  "keep after SIGKILL preserves WAL-only committed rows",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prism-drill-keep-"));
+    const live = join(dir, "prism.db");
+    await writeShop(live);
+    const script = `
+      import { Database } from "bun:sqlite";
+      const db = new Database(${JSON.stringify(live)});
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA wal_autocheckpoint = 0");
+      const now = Date.now();
+      for (const n of [1, 2, 3]) {
+        db.run(
+          "INSERT INTO visitors (id, site, first_seen, last_seen, visits) VALUES (?, 'shop', ?, ?, 1)",
+          "wal-" + n,
+          now,
+          now,
+        );
+      }
+      process.stdout.write("open\\n");
+      await new Promise(() => {});
+    `;
+    const writer = Bun.spawn([process.execPath, "-e", script], {
+      cwd: repo,
+      env: { ...process.env, DB_PATH: live },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const reader = writer.stdout.getReader();
+    const decoder = new TextDecoder();
+    let banner = "";
+    while (!banner.includes("open\n")) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        const stderr = await new Response(writer.stderr).text();
+        throw new Error(`writer exited before open\n${stderr}`);
+      }
+      banner += decoder.decode(chunk.value, { stream: true });
+    }
+    writer.kill("SIGKILL");
+    await writer.exited;
+    expect(existsSync(`${live}-wal`)).toBe(true);
+
+    const withWal = new Database(live, { readonly: true });
+    expect(withWal.query("SELECT COUNT(*) AS n FROM visitors").get()).toEqual({ n: 5 });
+    withWal.close();
+
+    const copiedMain = join(dir, "copied-main.sqlite");
+    copyFileSync(live, copiedMain);
+    const withoutWal = new Database(copiedMain, { readonly: true });
+    expect(withoutWal.query("SELECT COUNT(*) AS n FROM visitors").get()).toEqual({ n: 2 });
+    withoutWal.close();
+
+    const kept = join(dir, "prism.db.2026-10-15");
+    const result = await runCli(["keep", "--to", kept], childEnv(live));
+    expect(result.code, result.stderr).toBe(0);
+    const body = JSON.parse(result.stdout) as { ok: boolean; path: string; counts: Record<string, number> };
+    expect(body.ok).toBe(true);
+    expect(body.counts.visitors).toBe(5);
+
+    copyFileSync(kept, join(dir, "prism-restored.sqlite"));
+    unlinkSync(`${live}-wal`);
+    if (existsSync(`${live}-shm`)) unlinkSync(`${live}-shm`);
+    const after = new Database(kept, { readonly: true });
+    expect(after.query("SELECT COUNT(*) AS n FROM visitors").get()).toEqual({ n: 5 });
+    after.close();
+  },
+  { timeout: 30_000 },
 );
 
 test.serial(
