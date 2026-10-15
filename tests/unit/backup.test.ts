@@ -210,6 +210,43 @@ test("BACKUP_TOKEN unset or wrong is HTTP 401", async () => {
   expect(await wrong.json()).toEqual({ ok: false, error: "unauthorized" });
 });
 
+test("the server route rejects a missing token and the trust pages name Tigris", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-backup-route-"));
+  const script = `
+    process.env.DB_PATH = ${JSON.stringify(join(dir, "route.sqlite"))};
+    delete process.env.BACKUP_TOKEN;
+    console.log = () => {};
+    const { default: app } = await import("./src/server.ts");
+    const backup = await app.request("http://127.0.0.1/internal/backup", { method: "POST" });
+    const privacy = await (await app.request("http://127.0.0.1/privacy")).text();
+    const security = await (await app.request("http://127.0.0.1/security")).text();
+    process.stdout.write(JSON.stringify({ status: backup.status, body: await backup.json(), privacy, security }));
+  `;
+  const proc = Bun.spawn([process.execPath, "-e", script], {
+    cwd: repo,
+    env: baseEnv(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  expect(code, stderr).toBe(0);
+  const page = JSON.parse(stdout) as { status: number; body: { ok: boolean; error: string }; privacy: string; security: string };
+  expect(page.status).toBe(401);
+  expect(page.body).toEqual({ ok: false, error: "BACKUP_TOKEN is unset" });
+  expect(page.privacy).toContain(
+    "Data lives in SQLite on Fly.io (US, iad region). Fly.io keeps daily volume snapshots. When off-volume backup is configured, Prism also stores one gzipped copy per day in Tigris and deletes copies older than 14 days. Tigris is then a subprocessor. Fly.io hosts the app. Contact: privacy@sundaymorning.software.",
+  );
+  expect(page.privacy).toContain("The saved count has no cookie and no IP address.");
+  expect(page.security).toContain(
+    "Browser to Prism API (HTTPS only, HSTS via the Fly edge) to SQLite on an encrypted Fly volume. When off-volume backup is configured, the app uploads that database to Tigris. Visitor data does not go anywhere else.",
+  );
+  expect(page.security).not.toContain("No data leaves that path.");
+}, { timeout: 30_000 });
+
 test("a matching token with no S3 env returns the skip receipt", async () => {
   const response = await handleBackupRequest(
     new Request("http://127.0.0.1/internal/backup", {

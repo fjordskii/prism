@@ -1,0 +1,35 @@
+name: backup
+
+on:
+  schedule:
+    - cron: "15 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: prism-backup
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake and snapshot
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BACKUP_TOKEN" ]; then
+            echo "BACKUP_TOKEN is unset; snapshot skipped."
+            exit 0
+          fi
+          curl -fsS --max-time 55 -o /dev/null https://prism-personalize.fly.dev/snippet.js
+          body=$(mktemp)
+          code=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${BACKUP_TOKEN}" \
+            --max-time 55 \
+            -o "$body" \
+            -w "%{http_code}" \
+            https://prism-personalize.fly.dev/internal/backup)
+          cat "$body"
+          echo
+          test "$code" = "200"

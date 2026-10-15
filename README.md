@@ -47,6 +47,46 @@ Environment:
 | `PILOT_PAYMENT_LINK` | unset | Stripe Payment Link URL. Test mode accepts only a URL that starts with `https://buy.stripe.com/test_` |
 | `BILLING_LIVE_APPROVED` | unset | set to `yes` before `BILLING_MODE=live` shows a pay button |
 | `GROWTH_RATE_PER_MIN` | `DECIDE_RATE_PER_MIN`, else `600` | per-client cap for `POST /api/growth` |
+| `S3_ENDPOINT` | unset | S3 API URL. Unset, the daily snapshot skips and uploads nothing |
+| `S3_BUCKET` | unset | bucket name. One DNS label |
+| `S3_ACCESS_KEY_ID` | unset | access key that can list, put, get, and delete in that bucket |
+| `S3_SECRET_ACCESS_KEY` | unset | secret for that access key |
+| `S3_REGION` | `auto` | region on the S3 signature. Tigris uses `auto` |
+| `BACKUP_RETENTION_DAYS` | `14` | UTC days to keep, including today. An integer from 1 to 30 |
+| `BACKUP_TOKEN` | unset | bearer for `POST /internal/backup`. Unset, the route returns 401 |
+
+## Off-volume backup
+
+The backup workflow runs at 08:15 UTC. `workflow_dispatch` runs the same job. It requests `https://prism-personalize.fly.dev/snippet.js`, then POSTs `/internal/backup` with `Authorization: Bearer $BACKUP_TOKEN`. GitHub stores that token and no S3 key. If the GitHub secret is empty, the job prints `BACKUP_TOKEN is unset; snapshot skipped.` and exits 0.
+
+Before the S3 secrets exist, the same POST returns HTTP 200.
+
+```json
+{"ok":true,"skipped":true,"reason":"missing S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"}
+```
+
+A wrong bearer returns HTTP 401. A snapshot that ran and failed returns HTTP 500.
+
+Restore writes a new file. It does not replace the live database. The procedure is in [docs/backup-restore.md](docs/backup-restore.md).
+
+```sh
+fly machine start -a prism-personalize
+fly ssh console -a prism-personalize -C \
+  "bun src/backup.ts restore --date 2026-10-14 --to /data/prism.restore"
+fly machine restart -a prism-personalize
+```
+
+Omit `--date` to restore the newest object. Restart runs `adopt` before `seed` opens the database. `restore` refuses `--to` when that path is `DB_PATH` or when the file name is `prism.db`.
+
+The MinIO drill is `tests/drill/backup-restore.test.ts`. It is not part of `tests/unit`, so a MinIO failure does not block deploy.
+
+This change does not create a bucket, set secrets, or deploy. Do these once, in order.
+
+1. Create a private Tigris bucket on the free tier. Use endpoint `https://t3.storage.dev` and region `auto`. The bucket name is one DNS label.
+2. Create an access key that can list, put, get, and delete objects in that bucket only.
+3. Set Fly secrets on `prism-personalize` for `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_REGION=auto`, `BACKUP_RETENTION_DAYS=14`, and a new random `BACKUP_TOKEN`.
+4. Set the GitHub secret `BACKUP_TOKEN` to that same token. Do not put the S3 keys in GitHub.
+5. Deploy is a later PR. Until these secrets exist, the route returns the skip receipt and uploads nothing.
 
 ## Auth model
 
