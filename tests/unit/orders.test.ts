@@ -19,13 +19,23 @@ process.env.DECIDE_NEW_VISITORS_PER_HOUR = "5";
 
 await import("../../src/seed.ts");
 const { default: app } = await import("../../src/server.ts");
+const { siteWriteKey } = await import("../../src/write-key.ts");
 
 const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 function post(path: string, body: unknown, headers: Record<string, string> = {}) {
+  const site = body && typeof body === "object" && body !== null && "site" in body
+    ? String((body as { site: unknown }).site)
+    : "";
+  const key = (path === "/api/identify" || path === "/api/events") ? siteWriteKey(site) : null;
   return app.request("http://127.0.0.1" + path, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${ADMIN}`, ...headers },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${ADMIN}`,
+      ...(key ? { "x-prism-key": key } : {}),
+      ...headers,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -124,6 +134,7 @@ describe("POST /api/events order", () => {
 
   test("malformed orderId, value, or currency is a 400 that names the field", async () => {
     const site = uid("bad");
+    await variant(site, "Hero");
     const cases: [unknown, string, string][] = [
       [{ type: "order", value: "1.00", currency: "USD" }, "orderId", "missing orderId"],
       [{ type: "order", orderId: "", value: "1.00", currency: "USD" }, "orderId", "missing orderId"],

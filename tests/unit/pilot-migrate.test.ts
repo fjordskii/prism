@@ -17,7 +17,8 @@ test("booting on a pre-change database adds pilot_inquiries without dropping exi
       traits TEXT NOT NULL DEFAULT '{}'
     );
     INSERT INTO visitors (id, site, first_seen, last_seen, visits, traits)
-    VALUES ('keep-me', 'demo', 10, 20, 4, '{"orders":2}');
+    VALUES ('keep-me', 'demo', 10, 20, 4, '{"orders":2}'),
+           ('orphan-vid', 'orphan-shop', 10, 20, 1, '{}');
     CREATE TABLE variants (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       site TEXT NOT NULL,
@@ -68,6 +69,8 @@ test("booting on a pre-change database adds pilot_inquiries without dropping exi
     variants: 1,
     events: 1,
     site: { plan: "growth" },
+    demoWriteKey: true,
+    orphanWriteKey: true,
     account: { role: "owner" },
     accountSites: { name: "account_sites" },
     accountSiteRows: 0,

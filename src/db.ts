@@ -86,6 +86,11 @@ for (const col of ["starts_at INTEGER", "ends_at INTEGER"]) {
 }
 try { db.exec("ALTER TABLE events ADD COLUMN audience_key TEXT"); } catch { /* already there */ }
 try { db.exec("ALTER TABLE sites ADD COLUMN holdout_pct INTEGER"); } catch { /* already there */ }
+const siteCols = db.prepare("PRAGMA table_info(sites)").all() as { name: string }[];
+if (!siteCols.some((col) => col.name === "write_key")) {
+  db.exec("ALTER TABLE sites ADD COLUMN write_key TEXT");
+}
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_write_key ON sites(write_key) WHERE write_key IS NOT NULL");
 db.exec("CREATE INDEX IF NOT EXISTS idx_events_site_audience ON events(site, audience_key, selector, type)");
 
 // Orders are their own fact. One row per site and order id. Credits name the

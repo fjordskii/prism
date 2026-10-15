@@ -25,10 +25,12 @@ delete process.env.BASE_URL;
 
 let app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 let db: import("bun:sqlite").Database;
+let siteWriteKey: typeof import("../../src/write-key.ts").siteWriteKey;
 beforeAll(async () => {
   await import("../../src/seed.ts");
   ({ db } = await import("../../src/db.ts"));
   ({ default: app } = await import("../../src/server.ts"));
+  ({ siteWriteKey } = await import("../../src/write-key.ts"));
 });
 
 const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -55,7 +57,7 @@ describe("POST /api/decide (PRISM-030)", () => {
     const vid = uid("v_gift");
     const before = visitorRows("demo");
     await app.request("http://127.0.0.1/api/identify", {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json", "x-prism-key": siteWriteKey("demo")! },
       body: JSON.stringify({ visitorId: vid, site: "demo", traits: { intent: "gift" } }),
     });
     const r = await decide({ visitorId: vid, site: "demo" }, { "fly-client-ip": "10.0.0.2" });

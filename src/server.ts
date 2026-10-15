@@ -18,9 +18,11 @@ import {
   accountRole, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
 } from "./auth";
 import {
-  SITE_RE, deleteMembership, listVisibleSites, openAdmin, requireAdminToken, requireDeployment,
-  requireSite, upsertMembership, wideOwnerSession, type AccessCtx,
+  SITE_RE, deleteMembership, injectDemoWriteKey, listVisibleSites, openAdmin, readWriteKey,
+  requireAdminToken, requireDeployment, requireSite, requireWriteKey, rotateWriteKey,
+  siteWriteKey, upsertMembership, wideOwnerSession, type AccessCtx,
 } from "./access";
+import { newWriteKey } from "./write-key";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { windowCounter, clientIp } from "./ratelimit";
 import { applyOffers, billingDecision, parsePilotInquiry, pilotPage, type PayView } from "./offer";
@@ -43,17 +45,6 @@ app.onError((err, c) => {
   return c.json({ error: "internal error" }, 500);
 });
 
-// Optional anti-poisoning write key: if SITE_WRITE_KEY is set, snippet calls must carry it.
-const WRITE_KEY = process.env.SITE_WRITE_KEY;
-app.use("/api/identify", async (c, next) => {
-  if (WRITE_KEY && c.req.header("x-prism-key") !== WRITE_KEY) return c.json({ error: "bad write key" }, 401);
-  return next();
-});
-app.use("/api/events", async (c, next) => {
-  if (WRITE_KEY && c.req.header("x-prism-key") !== WRITE_KEY) return c.json({ error: "bad write key" }, 401);
-  return next();
-});
-
 // ---------- visitor upsert ----------
 const getVisitor = db.prepare("SELECT * FROM visitors WHERE id = ? AND site = ?");
 const insVisitor = db.prepare(
@@ -67,6 +58,8 @@ const updTraits = db.prepare("UPDATE visitors SET traits = ? WHERE id = ? AND si
 app.post("/api/identify", async (c) => {
   const body = await c.req.json<{ visitorId: string; site: string; traits?: Record<string, unknown> }>();
   if (!body.visitorId || !body.site) return c.json({ error: "visitorId and site required" }, 400);
+  const gate = requireWriteKey(c.req.header("x-prism-key"), body.site);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const now = Date.now();
   const existing = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
   const traits = { ...(existing ? JSON.parse(existing.traits) : {}), ...(body.traits ?? {}) };
@@ -215,6 +208,8 @@ app.post("/api/events", async (c) => {
     events: { variantId?: number | null; selector?: string; type?: string; audienceKey?: unknown; orderId?: unknown; value?: unknown; currency?: unknown }[];
   }>();
   if (!body.site || !body.visitorId || !Array.isArray(body.events)) return c.json({ error: "bad payload" }, 400);
+  const gate = requireWriteKey(c.req.header("x-prism-key"), body.site);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   let recorded = 0;
   let duplicates = 0;
   const rejected: { index: number; field: string; message: string }[] = [];
@@ -333,15 +328,46 @@ app.delete("/api/variants/:id", async (c) => {
 });
 
 const upsertPlan = db.prepare(
-  "INSERT INTO sites (site, plan, created_at) VALUES (?, ?, ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan"
+  `INSERT INTO sites (site, plan, created_at, write_key) VALUES (?, ?, ?, ?)
+   ON CONFLICT(site) DO UPDATE SET plan = excluded.plan`
 );
 app.post("/api/sites/:site/plan", async (c) => {
   const gate = await requireDeployment(c);
   if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const body = await c.req.json<{ plan?: string }>().catch(() => null);
   if (!body?.plan || !Object.hasOwn(PLANS, body.plan)) return c.json({ error: "unknown plan" }, 400);
-  upsertPlan.run(c.req.param("site"), body.plan, Date.now());
+  upsertPlan.run(c.req.param("site"), body.plan, Date.now(), newWriteKey());
   return c.json({ ok: true, site: c.req.param("site"), plan: body.plan });
+});
+
+app.get("/api/sites/:site/write-key", async (c) => {
+  const site = c.req.param("site");
+  const gate = await requireSite(c, site, "owner");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  const cap = applyCap(gate.canRegisterSite, site);
+  if (!cap.ok) {
+    return cap.error === "forbidden"
+      ? c.json({ error: "forbidden" }, 403)
+      : c.json({ error: "site_cap", cap: cap.cap }, 402);
+  }
+  const view = readWriteKey(site);
+  if ("ok" in view && view.ok === false) return c.json({ error: view.error }, 404);
+  return c.json(view);
+});
+
+app.post("/api/sites/:site/write-key", async (c) => {
+  const site = c.req.param("site");
+  const gate = await requireSite(c, site, "owner");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  const cap = applyCap(gate.canRegisterSite, site);
+  if (!cap.ok) {
+    return cap.error === "forbidden"
+      ? c.json({ error: "forbidden" }, 403)
+      : c.json({ error: "site_cap", cap: cap.cap }, 402);
+  }
+  const view = rotateWriteKey(site);
+  if ("ok" in view && view.ok === false) return c.json({ error: view.error }, 404);
+  return c.json(view);
 });
 
 app.put("/api/account-sites", async (c) => {
@@ -767,7 +793,7 @@ app.get("/security", (c) =>
       `<h2>Serving model</h2>
 <p>The 14 KB snippet (5 KB gzipped) loads with <code>defer</code>. It hides only the sections named in <code>data-selectors</code>, and only until a decision arrives or a short timeout passes. Every DOM operation is wrapped in try/catch. If Prism is unreachable, visitors see your default page. Nothing in the request path runs a model or third-party code. Insert-style variants are idempotent: re-applied operations replace, never duplicate.</p>
 <h2>Access control</h2>
-<p>Variant writes, the dashboard, exports, privacy endpoints, and catalog reads (<code>/api/sites</code>, <code>/api/variants</code>, <code>/api/stats</code>) require a Bearer token or a signed-in session. The demo token reaches only the <code>demo</code> site. An optional per-site write key (<code>SITE_WRITE_KEY</code>) locks identify and event ingestion against poisoning. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
+<p>Variant writes, the dashboard, exports, privacy endpoints, and catalog reads (<code>/api/sites</code>, <code>/api/variants</code>, <code>/api/stats</code>) require a Bearer token or a signed-in session. The demo token reaches only the <code>demo</code> site. Each site has its own snippet write key. Identify and event posts must send it as <code>x-prism-key</code>. A missing or mismatched key is rejected. The old shared <code>SITE_WRITE_KEY</code> is accepted with a warning until <code>SITE_WRITE_KEY_GRACE_UNTIL</code>. For supply-chain control, self-host the snippet from your own domain (<code>data-host</code>) or pin the versioned immutable URL <code>/snippet.v1.js</code>.</p>
 <h2>Data integrity</h2>
 <p>Conversions are only recorded for visitors with a matching prior impression. Stats ship with 95% intervals. Each audience has its own holdout. The default is 10% of visitors, and a site can set its own percentage. Wide intervals are reported as not enough data yet.</p>
 <h2>Data flows</h2>
@@ -833,6 +859,15 @@ app.use("/landing/*", async (c, next) => {
 });
 app.use("/landing/*", serveStatic({ root: "./landing", rewriteRequestPath: (p) => p.replace(/^\/landing/, "") || "/index.html" }));
 app.get("/landing", (c) => c.redirect("/"));
+app.use("/demo/*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === "/demo/" || path === "/demo/index.html") {
+    const html = await Bun.file("demo/index.html").text();
+    const key = siteWriteKey("demo");
+    return c.html(key ? injectDemoWriteKey(html, key) : html);
+  }
+  await next();
+});
 app.use("/demo/*", serveStatic({ root: "./demo", rewriteRequestPath: (p) => p.replace(/^\/demo/, "") || "/index.html" }));
 app.get("/demo", (c) => c.redirect("/demo/"));
 app.get("/", async (c) => c.html(await landingDocument(await payView(c))));

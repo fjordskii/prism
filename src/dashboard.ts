@@ -178,6 +178,15 @@ export function dashboard(boot: DashboardBoot): string {
     <button type="button" id="saveHoldout">Save</button>
     <span id="holdoutNote"></span>
   </div>
+  <div class="holdout-set" id="writeKeyBox" hidden>
+    <label for="writeKeyValue">Snippet write key</label>
+    <input id="writeKeyValue" readonly>
+    <button type="button" id="copyWriteKey">Copy key</button>
+    <button type="button" id="copySnippetTag">Copy snippet</button>
+    <button type="button" id="rotateWriteKey">Rotate</button>
+    <span id="writeKeyNote"></span>
+  </div>
+  <pre id="writeKeySnippet" hidden style="margin:0 20px 16px;padding:12px 14px;background:#fafbfd;border:1px solid var(--line-soft);border-radius:8px;overflow:auto;font-size:12px;white-space:pre-wrap"></pre>
   <div id="lift"></div>
   <div class="tablewrap">
   <table id="vt"><thead><tr>
@@ -592,6 +601,38 @@ function renderExperiences(stats) {
     root.appendChild(wrap);
   }
 }
+async function loadWriteKey() {
+  const box = document.getElementById('writeKeyBox');
+  const snippet = document.getElementById('writeKeySnippet');
+  const note = document.getElementById('writeKeyNote');
+  if (!site) { box.hidden = true; snippet.hidden = true; return; }
+  const r = await authFetch('/api/sites/' + encodeURIComponent(site) + '/write-key');
+  if (!r.ok) { box.hidden = true; snippet.hidden = true; return; }
+  const body = await r.json();
+  document.getElementById('writeKeyValue').value = body.writeKey;
+  snippet.textContent = body.snippet;
+  snippet.hidden = false;
+  box.hidden = false;
+  note.textContent = '';
+}
+document.getElementById('copyWriteKey').addEventListener('click', async () => {
+  const value = document.getElementById('writeKeyValue').value;
+  if (!value) return;
+  await navigator.clipboard.writeText(value);
+  document.getElementById('writeKeyNote').textContent = 'Copied key.';
+});
+document.getElementById('copySnippetTag').addEventListener('click', async () => {
+  const value = document.getElementById('writeKeySnippet').textContent;
+  if (!value) return;
+  await navigator.clipboard.writeText(value);
+  document.getElementById('writeKeyNote').textContent = 'Copied snippet.';
+});
+document.getElementById('rotateWriteKey').addEventListener('click', async () => {
+  if (!site || !confirm('Rotate this site write key? The old key stops working immediately.')) return;
+  const r = await authFetch('/api/sites/' + encodeURIComponent(site) + '/write-key', { method: 'POST' });
+  document.getElementById('writeKeyNote').textContent = r.ok ? 'Rotated. Update the snippet on the site.' : 'Could not rotate.';
+  if (r.ok) loadWriteKey();
+});
 document.getElementById('saveHoldout').addEventListener('click', async () => {
   if (!site) return;
   const raw = document.getElementById('holdoutPct').value.trim();
@@ -641,6 +682,7 @@ document.getElementById('b-create').addEventListener('click', async () => {
 });
 if (!boot.denied && site) {
   load();
+  loadWriteKey();
   setInterval(load, 5000);
 }
 </script>
