@@ -1,5 +1,8 @@
+import type { DashboardBoot } from "./access";
+
 // Server-rendered admin dashboard. Visual variant builder + templates — no raw JSON required.
-export function dashboard(): string {
+export function dashboard(boot: DashboardBoot): string {
+  const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Prism Admin</title>
 <style>
@@ -167,7 +170,7 @@ export function dashboard(): string {
 <section class="card">
   <div class="card-head">
     <h2>Performance</h2>
-    <div class="meta"><span id="holdout"></span> <span id="planuse"></span> <span id="overlimit" style="color:var(--red);font-weight:600"></span></div>
+    <div class="meta">${boot.denied ? "No access to this site." : '<span id="holdout"></span> <span id="planuse"></span> <span id="overlimit" style="color:var(--red);font-weight:600"></span>'}</div>
   </div>
   <div class="holdout-set">
     <label for="holdoutPct">Holdout %</label>
@@ -228,22 +231,17 @@ export function dashboard(): string {
 
 </main>
 
+<script type="application/json" id="prism-boot">${bootJson}</script>
 <script>
-let site = new URLSearchParams(location.search).get('site') || 'demo';
+const boot = JSON.parse(document.getElementById('prism-boot').textContent);
+let site = boot.site;
 const qs = new URLSearchParams(location.search);
 const token = qs.get('token');
-async function loadSites() {
-  const res = await authFetch('/api/sites');
-  if (!res.ok) return;
-  const sites = await res.json();
-  const picker = document.getElementById('sitePicker');
-  picker.innerHTML = '';
-  if (!sites.includes(site)) sites.push(site);
-  for (const s of sites.sort()) {
-    const o = document.createElement('option');
-    o.value = s; o.textContent = s; if (s === site) o.selected = true;
-    picker.appendChild(o);
-  }
+const picker = document.getElementById('sitePicker');
+for (const s of boot.sites) {
+  const o = document.createElement('option');
+  o.value = s; o.textContent = s; if (s === site) o.selected = true;
+  picker.appendChild(o);
 }
 document.getElementById('sitePicker').addEventListener('change', e => {
   const p = new URLSearchParams(location.search);
@@ -257,8 +255,12 @@ document.getElementById('addSite').addEventListener('click', () => {
   p.set('site', v);
   location.search = p.toString();
 });
-function exportHref() { return '/api/export?site=' + site + (token ? '&token=' + token : ''); }
+function exportHref() {
+  if (!site) return '#';
+  return '/api/export?site=' + encodeURIComponent(site) + (token ? '&token=' + encodeURIComponent(token) : '');
+}
 function liftHref(format) {
+  if (!site) return '#';
   return '/api/sites/' + encodeURIComponent(site) + '/lift-report?format=' + format + (token ? '&token=' + encodeURIComponent(token) : '');
 }
 document.getElementById('export').href = exportHref();
@@ -591,6 +593,7 @@ function renderExperiences(stats) {
   }
 }
 document.getElementById('saveHoldout').addEventListener('click', async () => {
+  if (!site) return;
   const raw = document.getElementById('holdoutPct').value.trim();
   let holdoutPct = null;
   if (raw !== '') {
@@ -616,6 +619,7 @@ function authFetch(url, opts) {
   return fetch(url, opts);
 }
 document.getElementById('b-create').addEventListener('click', async () => {
+  if (!site) return;
   const field = document.getElementById('b-field').value.trim();
   let val = document.getElementById('b-value').value.trim();
   if (val !== '' && !isNaN(+val)) val = +val;
@@ -635,7 +639,10 @@ document.getElementById('b-create').addEventListener('click', async () => {
   if (r.ok) setTimeout(() => document.getElementById('b-msg').textContent = '', 2000);
   load();
 });
-loadSites(); load(); setInterval(load, 5000);
+if (!boot.denied && site) {
+  load();
+  setInterval(load, 5000);
+}
 </script>
 </body></html>`;
 }

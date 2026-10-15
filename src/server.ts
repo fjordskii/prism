@@ -9,14 +9,18 @@ import { banditScore } from "./bandit";
 import { pooledTotals } from "./counts";
 import { dashboard } from "./dashboard";
 import { architecture } from "./architecture";
-import { PLANS, sitePlan, usageFor, registerSite, holdoutFor, saveHoldout } from "./plans";
+import { PLANS, sitePlan, usageFor, holdoutFor, saveHoldout, applyCap } from "./plans";
 import { audienceKey, defaultHoldoutPct, isHoldout, pickExperience } from "./holdout";
 import { wilson, REPORT_NOTE } from "./lift";
 import { buildExperiences, renderLiftCsv, renderLiftHtml, type LiftReport } from "./experiences";
 import {
   oauthEnabled, DEV_EMAIL, SESSION_COOKIE, loginPage,
-  accountRole, sessionEmail, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
+  accountRole, makeSession, googleAuthUrl, exchangeCode, verifyGoogleIdToken,
 } from "./auth";
+import {
+  SITE_RE, deleteMembership, listVisibleSites, openAdmin, requireAdminToken, requireDeployment,
+  requireSite, upsertMembership, wideOwnerSession, type AccessCtx,
+} from "./access";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { windowCounter, clientIp } from "./ratelimit";
 import { applyOffers, billingDecision, parsePilotInquiry, pilotPage, type PayView } from "./offer";
@@ -29,7 +33,7 @@ import {
 const snippetSri = new Bun.CryptoHasher("sha384").update(await Bun.file("public/snippet.js").arrayBuffer()).digest("base64");
 console.log("snippet.v1.js SRI: sha384-" + snippetSri);
 
-const app = new Hono<{ Variables: { demoBody?: Record<string, unknown> } }>();
+const app = new Hono();
 app.use("/api/*", cors());
 // Malformed JSON bodies are a client error, not a 500.
 app.onError((err, c) => {
@@ -37,89 +41,6 @@ app.onError((err, c) => {
   if (err instanceof SyntaxError) return c.json({ error: "invalid JSON body" }, 400);
   console.error(err);
   return c.json({ error: "internal error" }, 500);
-});
-
-// Admin auth: Bearer token or session on mutating routes, the dashboard, and catalog reads.
-// Public (no auth): /api/identify, /api/decide, /api/events, and the snippet files.
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-// TODO: rotate by setting the Fly secret DEMO_TOKEN to a new value
-// (`fly secrets set DEMO_TOKEN=...`). This historical literal is the default
-// only when that env var is unset; once the secret is set, the literal is ignored.
-const DEMO_TOKEN = process.env.DEMO_TOKEN || "demo-panel-2026";
-// Read-only tokens: GET routes, /admin, /api/export, GET /api/visitors/:id — never mutations.
-const READONLY_TOKENS: Record<string, true> = Object.fromEntries(
-  (process.env.READONLY_TOKENS ?? "").split(",").filter(Boolean).map((t) => [t, true])
-);
-type AuthReq = { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } };
-function requestToken(c: AuthReq) {
-  return c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("token");
-}
-function demoTokenMatches(c: AuthReq) {
-  const tok = requestToken(c);
-  return Boolean(DEMO_TOKEN) && tok === DEMO_TOKEN;
-}
-// Session cookie (Google OAuth) takes precedence for browsers; Bearer/query tokens
-// remain the agent/operator path. Open mode only when NO auth is configured at all.
-async function authorized(c: AuthReq, allowDemo = false, allowReadonly = false) {
-  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
-  if (email) {
-    const role = accountRole(email);
-    if (role === "owner" || role === "editor") return true;
-    if (role === "viewer") return allowReadonly;
-  }
-  if (!ADMIN_TOKEN && !oauthEnabled) return true;
-  const tok = requestToken(c);
-  if (tok === ADMIN_TOKEN && ADMIN_TOKEN) return true;
-  if (allowDemo && DEMO_TOKEN && tok === DEMO_TOKEN) return true;
-  if (allowReadonly && tok !== undefined && Object.hasOwn(READONLY_TOKENS, tok)) return true;
-  return false;
-}
-// Admin token or an owner/editor session: any site. Demo token: the demo site
-// only (it is handed to prospects, so it must never read or erase another tenant).
-// Readonly tokens and viewer sessions: reads on any site of this deployment.
-// Google accounts stay deployment-wide; the demo token is the site-scoped credential.
-async function authorizedForSite(c: AuthReq, site: string, opts?: { write?: boolean }) {
-  if (await authorized(c)) return true;
-  if (site === "demo" && demoTokenMatches(c)) return true;
-  if (!opts?.write && (await authorized(c, false, true))) return true;
-  return false;
-}
-// Plan changes are billing-adjacent: admin token or an owner session, never editor/viewer/demo.
-async function fullAdmin(c: AuthReq) {
-  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
-  if (email && accountRole(email) === "owner") return true;
-  if (!ADMIN_TOKEN && !oauthEnabled) return true;
-  const tok = requestToken(c);
-  return Boolean(ADMIN_TOKEN) && tok === ADMIN_TOKEN;
-}
-app.use("/api/variants*", async (c, next) => {
-  if (c.req.method === "GET") {
-    const site = c.req.query("site") ?? "demo";
-    if (await authorizedForSite(c, site)) return next();
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  if (await authorized(c)) return next();
-  // Demo token may write ONLY to the demo site — prospects must be able to
-  // complete the authoring loop during evaluation.
-  if (demoTokenMatches(c)) {
-    if (c.req.method === "POST" && c.req.path === "/api/variants") {
-      const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-      if (body?.site === "demo") { c.set("demoBody", body); return next(); }
-    }
-    // toggle/delete allowed only for demo-site variants. Middleware runs before
-    // route matching, so extract the id from the path directly.
-    const m = c.req.path.match(/^\/api\/variants\/(\d+)/);
-    if (m) {
-      const v = db.prepare("SELECT site FROM variants WHERE id = ?").get(Number(m[1])) as { site: string } | null;
-      if (v?.site === "demo") return next();
-    }
-  }
-  return c.json({ error: "unauthorized" }, 401);
-});
-app.use("/admin", async (c, next) => {
-  if (await authorized(c, true, true)) return next();
-  if (oauthEnabled) return c.redirect("/auth/login");
-  return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
 });
 
 // Optional anti-poisoning write key: if SITE_WRITE_KEY is set, snippet calls must carry it.
@@ -159,8 +80,6 @@ app.post("/api/identify", async (c) => {
 // + audience, so a visitor does not flip arms on later requests. HOLDOUT_PCT is
 // the deployment default. A site row can override it.
 // Metering: decide counts visitors even before first identify, so usage is honest.
-// Only registered sites are metered (a sites row from registerSite / the plan
-// endpoint / seed, or existing variants), so made-up site names write nothing.
 const insMeter = db.prepare("INSERT OR IGNORE INTO visitors (id, site, first_seen, last_seen, traits) VALUES (?,?,?,?,'{}')");
 const touchMeter = db.prepare("UPDATE visitors SET last_seen = ? WHERE id = ? AND site = ?");
 const knownSite = db.prepare("SELECT 1 FROM sites WHERE site = ? UNION ALL SELECT 1 FROM variants WHERE site = ? LIMIT 1");
@@ -176,7 +95,6 @@ const growthLimitRaw = Number(process.env.GROWTH_RATE_PER_MIN ?? process.env.DEC
 const GROWTH_PER_MIN = Number.isFinite(growthLimitRaw) && growthLimitRaw >= 1 ? growthLimitRaw : 600;
 const growthRate = windowCounter(GROWTH_PER_MIN, 60_000);
 const newVisitorRate = windowCounter(NEW_VISITORS_PER_HOUR, 3_600_000);
-const SITE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 app.post("/api/decide", async (c) => {
   const body = await c.req.json<{ visitorId: string; site: string; selectors?: string[] }>();
@@ -193,7 +111,7 @@ app.post("/api/decide", async (c) => {
   if (!knownSite.get(body.site, body.site)) return c.json({ decisions: [], traits: {} });
 
   // Plan and usage are tenant data: only for callers allowed to read this site.
-  const canRead = await authorizedForSite(c, body.site);
+  const canRead = (await requireSite(c, body.site, "viewer")).ok;
 
   const now = Date.now();
   let visitor = getVisitor.get(body.visitorId, body.site) as { traits: string } | null;
@@ -361,26 +279,29 @@ app.post("/api/events", async (c) => {
 });
 
 app.get("/api/sites", async (c) => {
-  const rows = db.prepare("SELECT DISTINCT site FROM variants UNION SELECT DISTINCT site FROM events UNION SELECT DISTINCT site FROM visitors").all() as { site: string }[];
-  const sites = rows.map((r) => r.site);
-  // Full admin, readonly seat, or viewer session: every site on this deployment.
-  // Demo token: the demo site only. Anyone else: 401.
-  if (await authorized(c, false, true)) return c.json(sites);
-  if (demoTokenMatches(c)) return c.json(sites.filter((s) => s === "demo"));
-  return c.json({ error: "unauthorized" }, 401);
+  const listed = await listVisibleSites(c);
+  if (!listed.ok) return c.json({ error: listed.error }, listed.status);
+  return c.json(listed.sites);
 });
 // ---------- admin CRUD ----------
-app.get("/api/variants", (c) => {
+app.get("/api/variants", async (c) => {
   const site = c.req.query("site") ?? "demo";
+  const gate = await requireSite(c, site, "viewer");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   return c.json(db.prepare("SELECT * FROM variants WHERE site = ? ORDER BY id").all(site));
 });
 
 app.post("/api/variants", async (c) => {
-  // Body may already be parsed by the demo-token middleware (JSON bodies are single-read).
-  const b = (c.get("demoBody") ?? await c.req.json().catch(() => ({}))) as Partial<Variant> & { site: string; name: string; selector: string };
+  const b = await c.req.json().catch(() => ({})) as Partial<Variant> & { site?: string; name?: string; selector?: string };
   if (!b.site || !b.name || !b.selector) return c.json({ error: "site, name, selector required" }, 400);
-  const reg = registerSite(b.site);
-  if (!reg.ok) return c.json({ error: "site_cap", cap: reg.cap }, 402);
+  const gate = await requireSite(c, b.site, "editor");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  const cap = applyCap(gate.canRegisterSite, b.site);
+  if (!cap.ok) {
+    return cap.error === "forbidden"
+      ? c.json({ error: "forbidden" }, 403)
+      : c.json({ error: "site_cap", cap: cap.cap }, 402);
+  }
   const r = db
     .prepare(
       `INSERT INTO variants (site, name, selector, ops, audience, weight, starts_at, ends_at, active, created_at)
@@ -393,26 +314,50 @@ app.post("/api/variants", async (c) => {
   return c.json({ id: r.lastInsertRowid }, 201);
 });
 
-app.post("/api/variants/:id/toggle", (c) => {
-  db.prepare("UPDATE variants SET active = 1 - active WHERE id = ?").run(c.req.param("id"));
+app.post("/api/variants/:id/toggle", async (c) => {
+  const id = c.req.param("id");
+  const row = db.prepare("SELECT site FROM variants WHERE id = ?").get(id) as { site: string } | undefined;
+  const gate = await requireSite(c, row?.site ?? "", "editor", "missing");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  db.prepare("UPDATE variants SET active = 1 - active WHERE id = ?").run(id);
   return c.json({ ok: true });
 });
 
-app.delete("/api/variants/:id", (c) => {
-  db.prepare("DELETE FROM variants WHERE id = ?").run(c.req.param("id"));
+app.delete("/api/variants/:id", async (c) => {
+  const id = c.req.param("id");
+  const row = db.prepare("SELECT site FROM variants WHERE id = ?").get(id) as { site: string } | undefined;
+  const gate = await requireSite(c, row?.site ?? "", "editor", "missing");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  db.prepare("DELETE FROM variants WHERE id = ?").run(id);
   return c.json({ ok: true });
 });
 
-// Plan management: admin token only (no demo, no readonly).
 const upsertPlan = db.prepare(
   "INSERT INTO sites (site, plan, created_at) VALUES (?, ?, ?) ON CONFLICT(site) DO UPDATE SET plan = excluded.plan"
 );
 app.post("/api/sites/:site/plan", async (c) => {
-  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireDeployment(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const body = await c.req.json<{ plan?: string }>().catch(() => null);
   if (!body?.plan || !Object.hasOwn(PLANS, body.plan)) return c.json({ error: "unknown plan" }, 400);
   upsertPlan.run(c.req.param("site"), body.plan, Date.now());
   return c.json({ ok: true, site: c.req.param("site"), plan: body.plan });
+});
+
+app.put("/api/account-sites", async (c) => {
+  const gate = await requireAdminToken(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  const result = upsertMembership(await c.req.json().catch(() => null));
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(result);
+});
+
+app.delete("/api/account-sites", async (c) => {
+  const gate = await requireAdminToken(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
+  const result = deleteMembership(await c.req.json().catch(() => null));
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(result);
 });
 
 // ---------- stats ----------
@@ -493,30 +438,15 @@ function statsBody(site: string) {
 
 app.get("/api/stats", async (c) => {
   const site = c.req.query("site") ?? "demo";
-  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireSite(c, site, "viewer");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   return c.json(statsBody(site));
 });
 
-function credentialPresent(c: AuthReq): boolean {
-  return Boolean(requestToken(c)) || Boolean(getCookie(c as never)[SESSION_COOKIE]);
-}
-
-// Lift report and the per-site holdout are operator settings: admin token or an
-// owner session. A demo token, editor, or viewer is signed in and still refused.
-async function ownerOrAdmin(c: AuthReq): Promise<true | 401 | 403> {
-  if (await fullAdmin(c)) return true;
-  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
-  if (email && accountRole(email)) return 403;
-  const tok = requestToken(c);
-  if (tok && (tok === DEMO_TOKEN || Object.hasOwn(READONLY_TOKENS, tok))) return 403;
-  if (credentialPresent(c)) return 401;
-  return 401;
-}
-
 app.post("/api/sites/:site/holdout", async (c) => {
-  const gate = await ownerOrAdmin(c);
-  if (gate !== true) return c.json({ error: gate === 403 ? "forbidden" : "unauthorized" }, gate);
   const site = c.req.param("site");
+  const gate = await requireSite(c, site, "owner");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   if (!SITE_RE.test(site)) return c.json({ error: "invalid site" }, 400);
   const body = await c.req.json<{ holdoutPct?: unknown }>().catch(() => null);
   if (!body || !("holdoutPct" in body)) return c.json({ error: "holdoutPct required" }, 400);
@@ -524,16 +454,22 @@ app.post("/api/sites/:site/holdout", async (c) => {
   if (raw !== null && (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > 100)) {
     return c.json({ error: "holdoutPct must be an integer from 0 to 100, or null" }, 400);
   }
+  const cap = applyCap(gate.canRegisterSite, site);
+  if (!cap.ok) {
+    return cap.error === "forbidden"
+      ? c.json({ error: "forbidden" }, 403)
+      : c.json({ error: "site_cap", cap: cap.cap }, 402);
+  }
   const saved = saveHoldout(site, raw);
-  if (!saved.ok) return c.json({ error: "site_cap", cap: saved.cap }, 402);
+  if (!saved.ok) return c.json({ error: "unregistered" }, 403);
   const holdout = holdoutFor(site, defaultHoldoutPct());
   return c.json({ ok: true, site, holdoutPct: holdout.pct, holdoutPctSource: holdout.source });
 });
 
 app.get("/api/sites/:site/lift-report", async (c) => {
-  const gate = await ownerOrAdmin(c);
-  if (gate !== true) return c.json({ error: gate === 403 ? "forbidden" : "unauthorized" }, gate);
   const site = c.req.param("site");
+  const gate = await requireSite(c, site, "owner");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   if (!SITE_RE.test(site)) return c.json({ error: "invalid site" }, 400);
   const format = c.req.query("format") ?? "json";
   if (format !== "json" && format !== "html" && format !== "csv") return c.json({ error: "invalid format" }, 400);
@@ -573,7 +509,8 @@ app.get("/api/sites/:site/lift-report", async (c) => {
 // ---------- export / DSR ----------
 app.get("/api/export", async (c) => {
   const site = c.req.query("site") ?? "demo";
-  if (!(await authorizedForSite(c, site))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireSite(c, site, "viewer");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   return c.json({
     site,
     exportedAt: new Date().toISOString(),
@@ -584,25 +521,20 @@ app.get("/api/export", async (c) => {
   });
 });
 
-// GDPR/CCPA: export or erase one visitor across visitors+events. Token-gated —
-// these read/destroy PII-adjacent data, so they use the same auth as /admin.
-app.use("/api/visitors/*", async (c, next) => {
-  // Readonly tokens may read a visitor but never erase one. Demo token: demo site only.
+app.get("/api/visitors/:id", async (c) => {
   const site = c.req.query("site") ?? "demo";
-  const write = c.req.method !== "GET" && c.req.method !== "HEAD";
-  if (!(await authorizedForSite(c, site, { write }))) return c.json({ error: "unauthorized" }, 401);
-  return next();
-});
-app.get("/api/visitors/:id", (c) => {
-  const site = c.req.query("site") ?? "demo";
+  const gate = await requireSite(c, site, "viewer");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   return c.json({
     visitor: getVisitor.get(c.req.param("id"), site) ?? null,
     events: db.prepare("SELECT * FROM events WHERE visitor_id = ? AND site = ?").all(c.req.param("id"), site),
     orders: db.prepare("SELECT * FROM orders WHERE visitor_id = ? AND site = ?").all(c.req.param("id"), site),
   });
 });
-app.delete("/api/visitors/:id", (c) => {
+app.delete("/api/visitors/:id", async (c) => {
   const site = c.req.query("site") ?? "demo";
+  const gate = await requireSite(c, site, "editor");
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const id = c.req.param("id");
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM order_credits WHERE site = ? AND order_id IN (SELECT order_id FROM orders WHERE site = ? AND visitor_id = ?)").run(site, site, id);
@@ -720,7 +652,8 @@ app.post("/api/growth", async (c) => {
 });
 
 app.get("/api/growth", async (c) => {
-  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireDeployment(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const range = growthRange(c.req.query("from"), c.req.query("to"));
   if (!range.ok) return c.json({ error: "invalid" }, 400);
   const rows = (growthGrouped.all(range.from, range.to) as Record<string, unknown>[]).map(mapGrowthRow);
@@ -743,14 +676,9 @@ const listInquiries = db.prepare(
   "SELECT id, email, store_url, monthly_visitors, note, created_at FROM pilot_inquiries ORDER BY id DESC"
 );
 
-async function ownerSession(c: AuthReq): Promise<boolean> {
-  const email = await sessionEmail(getCookie(c as never)[SESSION_COOKIE]);
-  return Boolean(email && accountRole(email) === "owner");
-}
-
-async function payView(c: AuthReq): Promise<PayView> {
+async function payView(c: AccessCtx): Promise<PayView> {
   const decision = billingDecision(process.env);
-  const showPay = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await ownerSession(c));
+  const showPay = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await wideOwnerSession(c));
   return { showPay, paymentLink: showPay ? decision.paymentLink : null };
 }
 
@@ -759,9 +687,10 @@ app.get("/pilot", async (c) => c.html(pilotPage("form", await payView(c))));
 app.get("/pilot/thanks", (c) => c.html(pilotPage("paid")));
 
 app.get("/api/pilot/billing-status", async (c) => {
-  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireDeployment(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const decision = billingDecision(process.env);
-  const priceShown = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await ownerSession(c));
+  const priceShown = decision.payAudience === "everyone" || (decision.payAudience === "operator" && await wideOwnerSession(c));
   return c.json({ mode: decision.mode, effectiveMode: decision.effectiveMode, priceShown });
 });
 
@@ -792,7 +721,8 @@ app.post("/api/pilot/inquiry", async (c) => {
 });
 
 app.get("/api/pilot/inquiries", async (c) => {
-  if (!(await fullAdmin(c))) return c.json({ error: "unauthorized" }, 401);
+  const gate = await requireDeployment(c);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   const rows = listInquiries.all() as {
     id: number; email: string; store_url: string; monthly_visitors: string | null; note: string | null; created_at: number;
   }[];
@@ -868,11 +798,17 @@ app.use("/snippet.v1.js", async (c, next) => {
   c.header("cache-control", "public, max-age=31536000, immutable");
 });
 app.use("/snippet.v1.js", serveStatic({ path: "./public/snippet.js" }));
-app.get("/admin", (c) => c.html(dashboard()));
-// Internal architecture docs — same access rules as /admin (admin, demo, readonly).
+app.get("/admin", async (c) => {
+  const page = await openAdmin(c, c.req.query("site"));
+  if (page.kind === "login") return c.redirect("/auth/login");
+  if (page.kind === "unauthorized") return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
+  return c.html(dashboard(page.boot));
+});
 app.get("/architecture", async (c) => {
-  if (!(await authorized(c, true, true)))
-    return oauthEnabled ? c.redirect("/auth/login") : c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
+  const gate = await requireDeployment(c);
+  if (!gate.ok && gate.status === 401 && oauthEnabled) return c.redirect("/auth/login");
+  if (!gate.ok && gate.status === 401) return c.text("Unauthorized. Pass ?token= or an Authorization: Bearer header.", 401);
+  if (!gate.ok) return c.json({ error: gate.error }, gate.status);
   return c.html(architecture());
 });
 // Snippet: long cache + immutable-ish; it only changes on deploy, and cache-bust via ?v= if needed.

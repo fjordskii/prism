@@ -36,12 +36,12 @@ Environment:
 | `SITE_WRITE_KEY` | unset (open) | if set, snippet must send `data-key` to post traits/events |
 | `HOLDOUT_PCT` | `10` | default % of visitors held out as control for each audience and selector. A site can override it. The default stays 10. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset (OAuth off) | Google OAuth client; enables `/auth/login` for browser access |
-| `GOOGLE_ALLOWED_EMAILS` | unset | comma list, `email` or `email:owner|viewer` (default `editor`); seeds the `accounts` table |
+| `GOOGLE_ALLOWED_EMAILS` | unset | comma list. `email` and `email:role` are deployment-wide (`owner`, `editor`, or `viewer`; default `editor`). `email:role@site` adds one grant. Several sites are separated by a vertical bar. A broken suffix is skipped. Seed is insert-only |
 | `SESSION_SECRET` | `ADMIN_TOKEN` | signs session cookies; rotate to revoke all sessions |
 | `BASE_URL` | request origin | external origin for the OAuth redirect URI (set behind a proxy) |
 | `DEV_AUTH_EMAIL` | unset | local dev only: `/auth/dev-login` signs in as this email, no Google round-trip. NEVER set in production |
 | `PRISM_PLAN` | `selfhost` | plan assigned to newly-registered sites (`selfhost` = unlimited) |
-| `READONLY_TOKENS` | unset | comma-separated tokens with read-only access (GET routes, /admin, /api/export); mutations rejected |
+| `READONLY_TOKENS` | unset | comma list. An unsuffixed token is not trimmed and reads every site. A token with `@` and a site list reads only those sites; the bearer is the text before `@`. A bad suffix is skipped. A duplicate secret fails boot |
 | `BILLING_MODE` | `off` | `off`, `test`, or `live`. `off` shows no pay button |
 | `PILOT_PAYMENT_LINK` | unset | Stripe Payment Link URL. Test mode accepts only a URL that starts with `https://buy.stripe.com/test_` |
 | `BILLING_LIVE_APPROVED` | unset | set to `yes` before `BILLING_MODE=live` shows a pay button |
@@ -49,15 +49,18 @@ Environment:
 
 ## Auth model
 
-- **Humans** (dashboard, architecture page, exports): Google sign-in when
-  `GOOGLE_CLIENT_ID`/`SECRET` are set — `/auth/login` → session cookie. Roles come
-  from the `accounts` table: `owner` (everything incl. plan changes), `editor`
-  (variant CRUD, exports), `viewer` (read-only — the Agency tier's "read-only seat").
-- **Agents and scripts**: unchanged — `Authorization: Bearer $ADMIN_TOKEN`,
-  `READONLY_TOKENS`, `DEMO_TOKEN`, and `?token=` all keep working. The demo
-  token is scoped to site `demo` on every token-gated route (export, visitor
-  export/erasure, variant writes, and `GET /api/sites`, `/api/variants`, `/api/stats`).
-- Unset everything auth-related and the deployment is open (local-dev default).
+- **Humans**: Google sign-in when `GOOGLE_CLIENT_ID`/`SECRET` are set. `/auth/login` sets a session cookie. An account with no `account_sites` rows is deployment-wide, and `accounts.role` applies on every site: `owner` (plan changes and the operator pages), `editor` (variant writes on existing sites), `viewer` (reads). Any `account_sites` row scopes that person to those sites and `accounts.role` is ignored.
+- **Pilot stores** are onboarded only as site-scoped accounts. The deployment-wide grant is for the operators.
+
+```
+GOOGLE_ALLOWED_EMAILS=ford@x.com:owner,ada@shop.com:owner@ada,ben@shop.com:editor@ada|ada-eu
+READONLY_TOKENS=audit-all,ada-ro@ada|ada-eu
+```
+
+The bearer for the second readonly token is `ada-ro`. `PUT /api/account-sites` and `DELETE /api/account-sites` with the admin token change a grant. Deleting the last grant also deletes the `accounts` row. A grant that is still in `GOOGLE_ALLOWED_EMAILS` returns on the next boot, because seed is insert-only.
+- **Agents and scripts**: `Authorization: Bearer $ADMIN_TOKEN` is deployment-wide. `DEMO_TOKEN` reaches only site `demo`. `READONLY_TOKENS` are read-only. `?token=` still works.
+- Unset `ADMIN_TOKEN` and leave OAuth off, and the deployment is open (local-dev default).
+- Snapshot `prism.db` before you deploy. The file sits on one Fly volume.
 
 ## Turn on pilot payment
 
@@ -70,8 +73,8 @@ The pay button stays off until you set the link, the mode, and, for a real charg
 fly secrets set PILOT_PAYMENT_LINK="https://buy.stripe.com/test_..." BILLING_MODE=test
 ```
 
-3. Sign in as an owner and open `/pilot`. The page shows "Pay for the pilot". Open `/pilot` in a private window. The button is absent, and the inquiry form is still there.
-4. Check the mode with the admin token. `effectiveMode` is `test` when the link is a test link. It is `off` when the link is missing or is not a test link. `priceShown` is true only when the caller would see the pay button. In test mode, that caller is an owner session, so a token-only request reports `priceShown` false.
+3. Sign in as a deployment-wide owner and open `/pilot`. The page shows "Pay for the pilot". Open `/pilot` in a private window. The button is absent, and the inquiry form is still there.
+4. Check the mode with the admin token. `effectiveMode` is `test` when the link is a test link. It is `off` when the link is missing or is not a test link. `priceShown` is true only when the caller would see the pay button. In test mode, that caller is a deployment-wide owner session, so a token-only request reports `priceShown` false.
 
 ```sh
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://prism-personalize.fly.dev/api/pilot/billing-status
@@ -113,7 +116,7 @@ Each row stores the UTC day, `utm_source`, `utm_medium`, `utm_campaign`, and the
 
 `event` has to be one of the five names above. Any other name, a body over 1024 bytes, or a client over the per-minute cap is rejected and not stored. The cap is 600 requests a minute per client IP, the same window as `POST /api/decide`.
 
-Read the counts with the admin token or an owner session. Any other caller gets 401. `from` and `to` are inclusive UTC dates (`YYYY-MM-DD`). If you omit them, the range is the last 90 days through today.
+Read the counts with the admin token or a deployment-wide owner session. A site-scoped account gets 403. Any other caller gets 401. `from` and `to` are inclusive UTC dates (`YYYY-MM-DD`). If you omit them, the range is the last 90 days through today.
 
 ```sh
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -246,17 +249,17 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/decide` | POST | — | audience match → bandit pick per selector |
 | `/api/events` | POST | write key | impressions, conversions, and orders (sendBeacon-safe) |
 | `/api/variants` | GET/POST | token or session for that site; POST writes need admin, editor, or the demo token on `demo` | list / create variants |
-| `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | token; demo token only for `demo` variants | pause / remove |
+| `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | editor on that variant's site; a non-member gets 404; demo token only for `demo` | pause / remove |
 | `/api/stats?site=` | GET | token or session for that site | per-variant click rate, orders, RPV, and AOV, with 95% intervals, pooled holdout, and a per-audience comparison |
 | `/api/sites` | GET | token or session; demo token lists `demo` only | site slugs the caller may see |
 | `/api/export?site=` | GET | token or session for that site | full tenant dump (variants, events, visitors) |
 | `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |
-| `/api/sites/:site/plan` | POST | admin token or owner session | set a site's plan (`{plan: "growth"}`) |
-| `/api/sites/:site/holdout` | POST | admin token or owner session | set that site's holdout percent (`{holdoutPct: 30}`) or clear it (`{holdoutPct: null}`) so the deployment default applies |
-| `/api/sites/:site/lift-report` | GET | admin token or owner session | lift report for that site only. `format` is `json` (default), `html` (printable page), or `csv` |
-| `/api/pilot/billing-status` | GET | admin token or owner session | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
+| `/api/sites/:site/plan` | POST | admin token or a deployment-wide owner | set a site's plan (`{plan: "growth"}`) |
+| `/api/sites/:site/holdout` | POST | owner on that site, or the admin token | set that site's holdout percent (`{holdoutPct: 30}`) or clear it (`{holdoutPct: null}`) so the deployment default applies |
+| `/api/sites/:site/lift-report` | GET | owner on that site, or the admin token | lift report for that site only. `format` is `json` (default), `html` (printable page), or `csv` |
+| `/api/pilot/billing-status` | GET | admin token or a deployment-wide owner | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
 | `/api/growth` | POST | — | count a landing or pilot event (allowlisted name, 1024-byte cap, per-client rate limit) |
-| `/api/growth?from=&to=` | GET | admin token or owner session | daily counts per event, with UTM and referrer-host breakdown |
+| `/api/growth?from=&to=` | GET | admin token or a deployment-wide owner | daily counts per event, with UTM and referrer-host breakdown |
 
 ## Plans and limits
 
@@ -282,9 +285,7 @@ value → visitor count). Registering a never-seen site via `POST /api/variants`
 returns `402 { error: "site_cap", cap }` once the deployment's site cap is full.
 
 Change a site's plan with `POST /api/sites/:site/plan` body
-`{"plan": "growth"}` (admin token; 400 on unknown plan). Issue read-only seats
-via the `READONLY_TOKENS` env var: those tokens reach GET routes, `/admin`,
-`/api/export`, and `GET /api/visitors/:id`, but every mutation is rejected.
+`{"plan": "growth"}` (admin token or a deployment-wide owner; 400 on an unknown plan). A site-scoped account cannot register a new site. An unsuffixed `READONLY_TOKENS` entry reads every site. `token@site1|site2` reads only those sites. Both reject every mutation.
 
 ## Design invariants
 

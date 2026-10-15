@@ -18,18 +18,6 @@ export type Role = "owner" | "editor" | "viewer";
 const SECRET = process.env.SESSION_SECRET ?? process.env.ADMIN_TOKEN ?? "prism-dev-secret";
 
 // ---------- accounts ----------
-// Bootstrap: GOOGLE_ALLOWED_EMAILS="alice@x.com:owner,bob@x.com" (role optional,
-// default editor). A deployment with OAuth on and zero accounts locks everyone out.
-const upsertAccount = db.prepare(
-  "INSERT OR IGNORE INTO accounts (email, role, created_at) VALUES (?, ?, ?)"
-);
-for (const entry of (process.env.GOOGLE_ALLOWED_EMAILS ?? "").split(",").filter(Boolean)) {
-  const [email, role] = entry.split(":");
-  if (!email) continue;
-  upsertAccount.run(email.trim().toLowerCase(), role === "owner" || role === "viewer" ? role : "editor", Date.now());
-}
-if (DEV_EMAIL) upsertAccount.run(DEV_EMAIL.toLowerCase(), "owner", Date.now());
-
 const getAccount = db.prepare("SELECT role FROM accounts WHERE email = ?");
 export function accountRole(email: string): Role | null {
   const row = getAccount.get(email.toLowerCase()) as { role: Role } | null;
