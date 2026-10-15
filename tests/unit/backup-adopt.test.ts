@@ -6,6 +6,34 @@ import { join } from "node:path";
 
 const repo = join(import.meta.dir, "../..");
 
+test("core tables parsed from db.ts skip the IF NOT EXISTS comment", () => {
+  expect(prismTableNames()).toEqual([
+    "visitors",
+    "variants",
+    "events",
+    "sites",
+    "accounts",
+    "pilot_inquiries",
+    "orders",
+    "order_credits",
+    "growth_events",
+    "account_sites",
+  ]);
+});
+
+function prismTableNames(): string[] {
+  const source = readFileSync(join(repo, "src/db.ts"), "utf8");
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of source.matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\(/g)) {
+    const name = match[1];
+    if (name === undefined || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
 function baseEnv(dbPath: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -40,6 +68,16 @@ function writeVisitors(path: string, ids: number[]) {
   db.close();
 }
 
+function writePrism(path: string, ids: number[]) {
+  const db = new Database(path);
+  for (const name of prismTableNames()) {
+    db.exec(`CREATE TABLE "${name.replaceAll('"', '""')}" (id INTEGER PRIMARY KEY)`);
+  }
+  const insert = db.query("INSERT INTO visitors (id) VALUES (?)");
+  for (const id of ids) insert.run(id);
+  db.close();
+}
+
 function visitorCount(path: string): number {
   const db = new Database(path, { readonly: true });
   const row = db.query("SELECT COUNT(*) AS n FROM visitors").get() as { n: number };
@@ -60,11 +98,11 @@ test("adopt with no pending file leaves the live database in place", async () =>
 test("adopt swaps prism.restore onto the live path and removes wal sidecars", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-pending-"));
   const live = join(dir, "prism.db");
-  writeVisitors(live, [1]);
+  writePrism(live, [1]);
   writeFileSync(`${live}-wal`, "old-wal");
   writeFileSync(`${live}-shm`, "old-shm");
   const pending = join(dir, "prism.restore");
-  writeVisitors(pending, [1, 2]);
+  writePrism(pending, [1, 2]);
 
   const result = await runAdopt(live);
   expect(result.code, result.stderr).toBe(0);
@@ -73,7 +111,7 @@ test("adopt swaps prism.restore onto the live path and removes wal sidecars", as
   expect(existsSync(`${live}-wal`)).toBe(false);
   expect(existsSync(`${live}-shm`)).toBe(false);
   expect(existsSync(pending)).toBe(false);
-  expect(existsSync(`${live}.previous`)).toBe(false);
+  expect(visitorCount(`${live}.previous`)).toBe(1);
 });
 
 test("a pending file that is not a database is moved aside and the live file stays", async () => {
@@ -98,9 +136,9 @@ test("a pending file that is not a database is moved aside and the live file sta
 test("adopt finishes a swap that stopped after the live file was moved aside", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-aside-"));
   const live = join(dir, "prism.db");
-  writeVisitors(`${live}.previous`, [1]);
+  writePrism(`${live}.previous`, [1]);
   const pending = join(dir, "prism.restore");
-  writeVisitors(pending, [1, 2]);
+  writePrism(pending, [1, 2]);
   writeFileSync(`${live}-wal`, "old-wal");
 
   const result = await runAdopt(live);
@@ -108,7 +146,7 @@ test("adopt finishes a swap that stopped after the live file was moved aside", a
   expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
   expect(visitorCount(live)).toBe(2);
   expect(existsSync(pending)).toBe(false);
-  expect(existsSync(`${live}.previous`)).toBe(false);
+  expect(visitorCount(`${live}.previous`)).toBe(1);
   expect(existsSync(`${live}-wal`)).toBe(false);
 });
 
@@ -140,7 +178,7 @@ test("adopt puts the previous database back when the pending file is gone", asyn
   expect(existsSync(`${live}.previous`)).toBe(false);
 });
 
-test("adopt deletes a previous file once the new live file is in place", async () => {
+test("adopt keeps a leftover previous file beside the live database", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-leftover-"));
   const live = join(dir, "prism.db");
   writeVisitors(live, [3, 4, 5]);
@@ -150,22 +188,77 @@ test("adopt deletes a previous file once the new live file is in place", async (
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
   expect(visitorCount(live)).toBe(3);
-  expect(existsSync(`${live}.previous`)).toBe(false);
+  expect(visitorCount(`${live}.previous`)).toBe(1);
 });
 
-test("adopt refuses to move files when the pending file and the previous file both exist", async () => {
+test("a later adopt replaces previous with the displaced live database", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-both-"));
   const live = join(dir, "prism.db");
-  writeVisitors(live, [1]);
+  writePrism(live, [1]);
   writeVisitors(`${live}.previous`, [8]);
   const pending = join(dir, "prism.restore");
-  writeVisitors(pending, [1, 2]);
-  const before = readFileSync(live);
+  writePrism(pending, [1, 2]);
 
   const result = await runAdopt(live);
-  expect(result.code, result.stderr).toBe(1);
-  expect(result.stdout).toBe('{"ok":false,"error":"prism.db.previous already exists"}\n');
-  expect(readFileSync(live)).toEqual(before);
-  expect(existsSync(pending)).toBe(true);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe(`{"ok":true,"adopted":true,"path":${JSON.stringify(live)}}\n`);
+  expect(visitorCount(live)).toBe(2);
+  expect(existsSync(pending)).toBe(false);
   expect(visitorCount(`${live}.previous`)).toBe(1);
+});
+
+test("a zero-byte restore is rejected and the live database stays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-zero-"));
+  const live = join(dir, "prism.db");
+  writePrism(live, [1, 2, 3]);
+  const before = readFileSync(live);
+  const pending = join(dir, "prism.restore");
+  writeFileSync(pending, "");
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toContain("adopt: moved stray restore aside to ");
+  expect(readFileSync(live)).toEqual(before);
+  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(true);
+  expect(visitorCount(live)).toBe(3);
+});
+
+test("a sqlite file with no Prism tables is rejected and the live database stays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-schema-"));
+  const live = join(dir, "prism.db");
+  writePrism(live, [4, 5]);
+  const before = readFileSync(live);
+  const pending = join(dir, "prism.restore");
+  const empty = new Database(pending);
+  empty.exec("PRAGMA user_version = 1");
+  empty.exec("CREATE TABLE other (id INTEGER PRIMARY KEY)");
+  empty.close();
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(result.stderr).toContain("adopt: moved stray restore aside to ");
+  expect(readFileSync(live)).toEqual(before);
+  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(true);
+  expect(visitorCount(live)).toBe(2);
+});
+
+test("a failed adopt leaves an existing previous file in place", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-keep-prev-"));
+  const live = join(dir, "prism.db");
+  writePrism(live, [1, 2, 3, 4]);
+  writeVisitors(`${live}.previous`, [9]);
+  const pending = join(dir, "prism.restore");
+  writeFileSync(pending, "");
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toBe('{"ok":true,"adopted":false}\n');
+  expect(visitorCount(live)).toBe(4);
+  expect(visitorCount(`${live}.previous`)).toBe(1);
+  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(true);
 });

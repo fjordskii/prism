@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBackupRequest } from "../../src/backup";
@@ -221,6 +221,15 @@ test("restore refuses live sidecars, a hardlink, a symlink, and PRISM.DB", async
   expect(byName.code, byName.stderr).toBe(1);
   expect(byName.stdout).toBe('{"ok":false,"error":"refusing to write prism.db"}\n');
   expect(readFileSync(cased, "utf8")).toBe("keep-case");
+
+  unlinkSync(`${live}-journal`);
+  const dangling = join(dir, "dangle-journal");
+  symlinkSync(`${live}-journal`, dangling);
+  const dangle = await runCli(["restore", "--to", dangling], env);
+  expect(dangle.code, dangle.stderr).toBe(1);
+  expect(dangle.stdout).toBe('{"ok":false,"error":"refusing to write a live database file"}\n');
+  expect(existsSync(`${live}-journal`)).toBe(false);
+  expect(readFileSync(live, "utf8")).toBe("keep");
 });
 
 test("restore to the live WAL refuses and leaves a writer-held database readable", async () => {
