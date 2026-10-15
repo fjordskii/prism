@@ -33,7 +33,8 @@ Environment:
 | `DB_PATH` | `prism.db` | SQLite file (use a volume in prod) |
 | `ADMIN_TOKEN` | unset (open) | Bearer token for variant writes, /admin, exports, and catalog reads |
 | `DEMO_TOKEN` | historical demo token, if unset | demo token (ask operator). Reaches only site `demo`. Rotation is a Fly secret (`fly secrets set DEMO_TOKEN=...`) |
-| `SITE_WRITE_KEY` | unset (open) | if set, snippet must send `data-key` to post traits/events |
+| `SITE_WRITE_KEY` | unset | legacy shared ingest key. Accepted with a warning until `SITE_WRITE_KEY_GRACE_UNTIL` |
+| `SITE_WRITE_KEY_GRACE_UNTIL` | open if unset | epoch ms after which `SITE_WRITE_KEY` is rejected |
 | `HOLDOUT_PCT` | `10` | default % of visitors held out as control for each audience and selector. A site can override it. The default stays 10. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset (OAuth off) | Google OAuth client; enables `/auth/login` for browser access |
 | `GOOGLE_ALLOWED_EMAILS` | unset | comma list. `email` and `email:role` are deployment-wide (`owner`, `editor`, or `viewer`; default `editor`). `email:role@site` adds one grant. Several sites are separated by a vertical bar. A broken suffix is skipped. Seed is insert-only |
@@ -176,7 +177,7 @@ Latest report: `docs/e2e-report.md`.
 
 ```html
 <!-- in <head>. data-selectors lists every section Prism may change -->
-<script defer src="https://YOUR_HOST/snippet.js" data-site="yourstore" data-selectors="#hero,#grid"></script>
+<script defer src="https://YOUR_HOST/snippet.js" data-site="yourstore" data-key="YOUR_WRITE_KEY" data-selectors="#hero,#grid"></script>
 <script>
 (function () {
   var tag = document.querySelector("script[data-selectors]");
@@ -202,6 +203,8 @@ Latest report: `docs/e2e-report.md`.
 </script>
 ```
 
+Copy `data-key` from `/admin`. Identify and event posts without that site's key are rejected.
+
 `data-timeout` is milliseconds (default 800). The inline script hides only those selectors before first paint. The snippet removes the hide when it applies the decision. If the request is still pending when the timer fires, the default stays for that pageview and the late answer is cached for the next one. Omit `data-selectors` and the snippet keeps the old post-paint behavior.
 
 ```js
@@ -220,7 +223,7 @@ The snippet stores the visitor id in the `prism_vid` cookie. A Shopify custom pi
 3. Paste `integrations/shopify/custom-pixel.js`.
 4. Set `PRISM_HOST` to the Prism origin and `PRISM_SITE` to the same site slug as `data-site` on the snippet.
 5. If the snippet uses `data-cookie`, set `PRISM_COOKIE` to that name. The default is `prism_vid`.
-6. If the server has `SITE_WRITE_KEY` set, put the same value in `PRISM_WRITE_KEY`.
+6. Put the site's write key from `/admin` in `PRISM_WRITE_KEY`. During the grace window the old shared `SITE_WRITE_KEY` still works.
 7. Save, then Connect.
 
 The pixel calls `analytics.subscribe('checkout_completed', ...)` and `browser.cookie.get`, which are the [Shopify web pixel APIs](https://shopify.dev/docs/api/web-pixels-api). Shopify runs the pixel in a sandbox. It sends the order id, the checkout total, and the currency. It does not send the buyer email or address.
@@ -245,9 +248,9 @@ Button blocks carry an optional conversion-selector field that emits
 
 | Route | Method | Auth | Purpose |
 |---|---|---|---|
-| `/api/identify` | POST | write key | upsert visitor traits |
+| `/api/identify` | POST | that site's write key (`x-prism-key`) | upsert visitor traits |
 | `/api/decide` | POST | — | audience match → bandit pick per selector |
-| `/api/events` | POST | write key | impressions, conversions, and orders (sendBeacon-safe) |
+| `/api/events` | POST | that site's write key (`x-prism-key`) | impressions, conversions, and orders (sendBeacon-safe) |
 | `/api/variants` | GET/POST | token or session for that site; POST writes need admin, editor, or the demo token on `demo` | list / create variants |
 | `/api/variants/:id/toggle` · `DELETE /api/variants/:id` | | editor on that variant's site; a non-member gets 404; demo token only for `demo` | pause / remove |
 | `/api/stats?site=` | GET | token or session for that site | per-variant click rate, orders, RPV, and AOV, with 95% intervals, pooled holdout, and a per-audience comparison |
@@ -256,6 +259,7 @@ Button blocks carry an optional conversion-selector field that emits
 | `/api/visitors/:id?site=` | GET/DELETE | token or session for that site; demo token only for `demo`; readonly tokens cannot delete | GDPR/CCPA export & erasure |
 | `/api/sites/:site/plan` | POST | admin token or a deployment-wide owner | set a site's plan (`{plan: "growth"}`) |
 | `/api/sites/:site/holdout` | POST | owner on that site, or the admin token | set that site's holdout percent (`{holdoutPct: 30}`) or clear it (`{holdoutPct: null}`) so the deployment default applies |
+| `/api/sites/:site/write-key` | GET/POST | owner on that site, or the admin token | view or rotate that site's snippet write key |
 | `/api/sites/:site/lift-report` | GET | owner on that site, or the admin token | lift report for that site only. `format` is `json` (default), `html` (printable page), or `csv` |
 | `/api/pilot/billing-status` | GET | admin token or a deployment-wide owner | `{ mode, effectiveMode, priceShown }` for the pilot pay button |
 | `/api/growth` | POST | — | count a landing or pilot event (allowlisted name, 1024-byte cap, per-client rate limit) |

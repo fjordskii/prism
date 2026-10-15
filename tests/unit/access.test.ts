@@ -235,8 +235,6 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
     expect(src.includes('app.use("/api/variants')).toBe(false);
     expect(src.includes('app.use("/admin"')).toBe(false);
     for (const [method, path] of [
-      ["POST", "/api/identify"],
-      ["POST", "/api/events"],
       ["POST", "/api/growth"],
       ["POST", "/api/pilot/inquiry"],
     ] as const) {

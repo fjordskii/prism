@@ -68,7 +68,7 @@ flowchart TB
         AGENT["AI agent or scripts: same REST API"]
     end
     subgraph Edge["Prism service (Bun + Hono)"]
-        AUTH["Auth: ADMIN_TOKEN full write; READONLY_TOKENS read-only seats; DEMO_TOKEN demo-site writes; SITE_WRITE_KEY ingest"]
+        AUTH["Auth: ADMIN_TOKEN full write; READONLY_TOKENS read-only seats; DEMO_TOKEN demo-site writes; per-site write key ingest"]
         DECIDE["POST /api/decide: metering, plan gate, audience match, holdout, bandit"]
         EVENTS["POST /api/events: conversion and order require a prior impression"]
         CRUD["/api/variants CRUD + site-cap 402"]
@@ -80,7 +80,7 @@ flowchart TB
         VA[("variants: site, selector, ops, audience, weight, schedule, active")]
         E[("events: visitor, variant?, audience?, type, ts")]
         O[("orders: order id, minor units, currency, credited arms")]
-        SI[("sites: site, plan, holdout_pct, created_at")]
+        SI[("sites: site, plan, holdout_pct, write_key, created_at")]
     end
     subgraph Plans["Plan enforcement (src/plans.ts)"]
         P["shadow 10k/1 site/tracking-only; growth 100k/3; pro 500k/5; agency 1M/unlimited; selfhost unlimited"]

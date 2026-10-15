@@ -25,11 +25,20 @@ if (process.env.PRISM_TEST_ISOLATED !== "1") {
   const { banditScore } = await import("../../src/bandit.ts");
   const { banditTotalsIncludingUnkeyed, experienceArms, installEventCounts, pooledTotals } = await import("../../src/counts.ts");
   const { default: app } = await import("../../src/server.ts");
+  const { siteWriteKey } = await import("../../src/write-key.ts");
 
   function post(path: string, body: unknown) {
+    const site = body && typeof body === "object" && body !== null && "site" in body
+      ? String((body as { site: unknown }).site)
+      : "";
+    const key = path === "/api/events" ? siteWriteKey(site) : null;
     return app.request("http://127.0.0.1" + path, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${ADMIN}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ADMIN}`,
+        ...(key ? { "x-prism-key": key } : {}),
+      },
       body: JSON.stringify(body),
     });
   }

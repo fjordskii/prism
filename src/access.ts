@@ -1,5 +1,11 @@
 import { db } from "./db";
 import { DEV_EMAIL, SESSION_COOKIE, oauthEnabled, sessionEmail, type Role } from "./auth";
+import { issueSiteWriteKeys } from "./write-key";
+
+export {
+  injectDemoWriteKey, readWriteKey, requireWriteKey, rotateWriteKey, siteWriteKey,
+  writeKeySnippet, type WriteKeyDecision, type WriteKeyView,
+} from "./write-key";
 
 export const SITE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -425,6 +431,11 @@ export const SITE_GATES = [
   { id: "plan", method: "POST", path: "/api/sites/:site/plan", call: "requireDeployment" },
   { id: "membership.put", method: "PUT", path: "/api/account-sites", call: "requireAdminToken" },
   { id: "membership.delete", method: "DELETE", path: "/api/account-sites", call: "requireAdminToken" },
+  { id: "identify", method: "POST", path: "/api/identify", call: "requireWriteKey" },
+  { id: "events", method: "POST", path: "/api/events", call: "requireWriteKey" },
+  { id: "writeKey.read", method: "GET", path: "/api/sites/:site/write-key", call: "requireSite", minRole: "owner", then: ["applyCap"] },
+  { id: "writeKey.rotate", method: "POST", path: "/api/sites/:site/write-key", call: "requireSite", minRole: "owner", then: ["applyCap"] },
 ] as const;
 
 seedAccounts();
+issueSiteWriteKeys();

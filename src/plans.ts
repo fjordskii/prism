@@ -1,5 +1,6 @@
 // Plan registry: makes the pricing-page limits enforceable in code.
 import { db } from "./db";
+import { newWriteKey } from "./write-key";
 
 export type PlanDef = { visitors: number | null; sites: number | null; personalize: boolean };
 export const PLANS: Record<string, PlanDef> = {
@@ -20,7 +21,7 @@ export function monthStart(): number {
 }
 
 const getSite = db.prepare("SELECT plan, holdout_pct FROM sites WHERE site = ?");
-const insSite = db.prepare("INSERT OR IGNORE INTO sites (site, plan, created_at) VALUES (?, ?, ?)");
+const insSite = db.prepare("INSERT OR IGNORE INTO sites (site, plan, created_at, write_key) VALUES (?, ?, ?, ?)");
 
 export function sitePlan(site: string): { plan: string; def: PlanDef } {
   const row = getSite.get(site) as { plan: string } | null;
@@ -73,6 +74,6 @@ function registerSite(site: string): { ok: true } | { ok: false; cap: number } {
     const row = db.prepare("SELECT COUNT(*) AS n FROM sites").get() as { n: number };
     if (row.n >= cap) return { ok: false, cap };
   }
-  insSite.run(site, DEPLOY_PLAN, Date.now());
+  insSite.run(site, DEPLOY_PLAN, Date.now(), newWriteKey());
   return { ok: true };
 }
