@@ -27,10 +27,12 @@ You need `flyctl` logged in to the `prism-personalize` app. The S3 secrets must 
    fly machine restart -a prism-personalize
    ```
 
-   The container command is `bun src/backup.ts adopt && bun run src/seed.ts && bun run src/server.ts`. `adopt` copies `/data/prism.restore` to a temp path and opens that copy with the same schema/migrate step boot uses, then prepares the statements the app prepares at startup. Only a candidate that passes replaces live. Older-schema backups migrate up; a file with Prism table names and the wrong columns is rejected.
+   The container command is `bun src/backup.ts adopt && bun run src/seed.ts && bun run src/server.ts`. `adopt` copies `/data/prism.restore` to a temp path **on the same volume** and opens that copy with the same schema/migrate step boot uses, then prepares the statements the app prepares at startup. Only a candidate that passes replaces live. Older-schema backups migrate up; a file with Prism table names and the wrong columns is rejected.
 
-The displaced live file is checkpointed (`PRAGMA wal_checkpoint(TRUNCATE)`) or moved with its `-wal`/`-shm` sidecars, then kept as `/data/prism.db.previous.<timestamp>`. Adopt keeps the newest three of those generations. A rejected candidate does not touch them, including when `prism.restore` is a symlink to `prism.db`. A `.previous` path that is a directory is skipped and does not stop the server.
+Any failure before the candidate is fully proven — copy, disk full, open, migrate, or prepare — leaves live exactly as it was. Environmental errors (ENOSPC, a full temp dir, a killed prove child) do not quarantine or rename live, leave `prism.restore` in place for the next boot, and exit 1 so seed does not create an empty database.
 
-If the first boot after an adopt cannot open the new live file, adopt restores the newest generation, logs that on stderr, and the server starts on the restored copy.
+The displaced live file is checkpointed (`PRAGMA wal_checkpoint(TRUNCATE)`) or moved with its `-wal`/`-shm` sidecars, then kept as `/data/prism.db.previous.<timestamp>`. Adopt keeps the newest three of those generations, ordered by the timestamp in the filename. A rejected candidate does not touch them, including when `prism.restore` is a symlink to `prism.db`. A `.previous` path that is a directory is skipped and does not stop the server.
+
+If the first boot after an adopt cannot open the new live file, adopt restores the newest generation, logs that on stderr, and the server starts on the restored copy. A prove copy that runs out of disk does not count as "cannot open".
 
 There is no HTTP restore. `BACKUP_TOKEN` cannot write a file onto the volume.

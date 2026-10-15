@@ -1,14 +1,20 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import {
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
+  rmSync,
+  statfsSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -28,10 +34,10 @@ function baseEnv(dbPath: string): Record<string, string> {
   return env;
 }
 
-async function runAdopt(dbPath: string) {
+async function runAdopt(dbPath: string, extraEnv: Record<string, string> = {}) {
   const proc = Bun.spawn(["bun", "src/backup.ts", "adopt"], {
     cwd: repo,
-    env: baseEnv(dbPath),
+    env: { ...baseEnv(dbPath), ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -137,12 +143,17 @@ function visitorCount(path: string): number {
   return row.n;
 }
 
+function generationStamp(live: string, name: string): number {
+  const prefix = `${basename(live)}.previous`;
+  if (name === prefix) return 0;
+  const match = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\d+)$`).exec(name);
+  return match?.[1] === undefined ? -1 : Number(match[1]);
+}
+
 function generations(live: string): string[] {
   const dir = dirname(live);
-  const prefix = `${basename(live)}.previous`;
-  const nameRe = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\.\\d+)?$`);
   return readdirSync(dir)
-    .filter((name) => nameRe.test(name))
+    .filter((name) => generationStamp(live, name) >= 0)
     .map((name) => join(dir, name))
     .filter((path) => {
       try {
@@ -151,7 +162,54 @@ function generations(live: string): string[] {
         return false;
       }
     })
-    .sort();
+    .sort((a, b) => generationStamp(live, basename(b)) - generationStamp(live, basename(a)));
+}
+
+function visitorId(path: string): string {
+  const db = new Database(path, { readonly: true });
+  const row = db.query("SELECT id FROM visitors").get() as { id: string };
+  db.close();
+  return row.id;
+}
+
+function mountTmpfs(size: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "prism-tmpfs-"));
+  const result = Bun.spawnSync(["sudo", "-n", "mount", "-t", "tmpfs", "-o", `size=${size},mode=1777`, "tmpfs", dir], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(`tmpfs mount failed: ${new TextDecoder().decode(result.stderr)}`);
+  }
+  return dir;
+}
+
+function unmountTmpfs(dir: string): void {
+  Bun.spawnSync(["sudo", "-n", "umount", "-l", dir], { stdout: "pipe", stderr: "pipe" });
+  rmSync(dir, { recursive: true, force: true });
+}
+
+function fillUntil(dir: string, remain: number): void {
+  const pad = join(dir, ".pad");
+  const fd = openSync(pad, "w");
+  try {
+    const st = statfsSync(dir);
+    const free = Number(st.bavail) * Number(st.bsize);
+    let left = Math.max(0, free - remain);
+    const buf = Buffer.alloc(64 * 1024, 1);
+    while (left > 0) {
+      const n = Math.min(left, buf.length);
+      try {
+        left -= writeSync(fd, buf, 0, n);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOSPC") return;
+        throw err;
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 test("adopt with no pending file leaves the live database in place", async () => {
@@ -252,28 +310,36 @@ test("adopt checkpoints live WAL into a timestamped generation", async () => {
   expect(ids.map((row) => row.id)).toEqual(["committed", "wal-only"]);
 }, { timeout: ADOPT_TIMEOUT });
 
-test("successful adopts keep the last three timestamped generations", async () => {
+test("adopt keeps the three newest generations by timestamp, not mtime", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-gens-"));
   const live = join(dir, "prism.db");
-  writeBootable(live, ["g0"]);
-  for (const id of ["g1", "g2", "g3", "g4"]) {
-    writeBootable(join(dir, "prism.restore"), [id]);
-    const result = await runAdopt(live);
-    expect(result.code, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: true, path: live });
-  }
-  expect(visitorCount(live)).toBe(1);
+  writeBootable(live, ["live"]);
+  writeBootable(`${live}.previous.9`, ["g9"]);
+  writeBootable(`${live}.previous.10`, ["g10"]);
+  writeBootable(`${live}.previous.11`, ["g11"]);
+  writeBootable(`${live}.previous.100`, ["g100"]);
+  const now = Date.now() / 1000;
+  utimesSync(`${live}.previous.9`, now, now);
+  utimesSync(`${live}.previous.10`, now - 30, now - 30);
+  utimesSync(`${live}.previous.11`, now - 20, now - 20);
+  utimesSync(`${live}.previous.100`, now - 40, now - 40);
+  writeBootable(join(dir, "prism.restore"), ["fresh"]);
+
+  const result = await runAdopt(live);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: true, path: live });
+  expect(visitorId(live)).toBe("fresh");
+
   const gens = generations(live);
   expect(gens).toHaveLength(3);
-  for (const gen of gens) {
-    expect(basename(gen)).toMatch(/^prism\.db\.previous\.\d+$/);
-  }
-  const ids = gens.map((path) => {
-    const row = new Database(path, { readonly: true }).query("SELECT id FROM visitors").get() as { id: string };
-    return row.id;
-  });
-  expect(ids.sort()).toEqual(["g1", "g2", "g3"]);
-}, { timeout: 180_000 });
+  expect(visitorId(gens[0]!)).toBe("live");
+  expect(basename(gens[0]!)).toMatch(/^prism\.db\.previous\.\d+$/);
+  expect(Number(basename(gens[0]!).slice("prism.db.previous.".length))).toBeGreaterThan(100);
+  expect(gens.slice(1).map((path) => basename(path))).toEqual(["prism.db.previous.100", "prism.db.previous.11"]);
+  expect(gens.slice(1).map(visitorId)).toEqual(["g100", "g11"]);
+  expect(existsSync(`${live}.previous.9`)).toBe(false);
+  expect(existsSync(`${live}.previous.10`)).toBe(false);
+}, { timeout: ADOPT_TIMEOUT });
 
 test("a pending file that is not a database is moved aside and the live file stays", async () => {
   const dir = mkdtempSync(join(tmpdir(), "prism-adopt-bad-"));
@@ -475,4 +541,103 @@ test("boot fallback restores the newest generation when live cannot boot", async
   db.close();
   expect(row.id).toBe("newest");
   expect(visitorCount(`${live}.previous.900`)).toBe(1);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("ENOSPC while proving a candidate leaves live and pending in place", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-enospc-copy-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  writeBootable(`${live}.previous.50`, ["keep-gen"]);
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["candidate"]);
+  const before = readFileSync(live);
+
+  const result = await runAdopt(live, { PRISM_ADOPT_INJECT: "enospc-copy" });
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: false, error: "ENOSPC: no space left on device" });
+  expect(result.stderr).toContain("prove deferred");
+  expect(readFileSync(live)).toEqual(before);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(visitorId(pending)).toBe("candidate");
+  expect(visitorId(`${live}.previous.50`)).toBe("keep-gen");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(existsSync(`${pending}.rejected`)).toBe(false);
+  expect(generations(live)).toEqual([`${live}.previous.50`]);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("ENOSPC during the swap leaves live in place and does not seed a hole", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-enospc-swap-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  writeBootable(`${live}.previous.60`, ["keep-gen"]);
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["candidate"]);
+  const before = readFileSync(live);
+
+  const result = await runAdopt(live, { PRISM_ADOPT_INJECT: "enospc-swap" });
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout).ok).toBe(false);
+  expect(readFileSync(live)).toEqual(before);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(visitorId(pending)).toBe("candidate");
+  expect(existsSync(`${live}.unbootable`)).toBe(false);
+  expect(generations(live)).toEqual([`${live}.previous.60`]);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("ENOSPC after live is displaced puts the original live back", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-adopt-enospc-undo-"));
+  const live = join(dir, "prism.db");
+  writeBootable(live, ["keep-live"]);
+  const pending = join(dir, "prism.restore");
+  writeBootable(pending, ["candidate"]);
+
+  const result = await runAdopt(live, { PRISM_ADOPT_INJECT: "enospc-swap-after-displace" });
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(result.stdout).ok).toBe(false);
+  expect(visitorId(live)).toBe("keep-live");
+  expect(existsSync(pending)).toBe(true);
+  expect(visitorId(pending)).toBe("candidate");
+  expect(generations(live)).toEqual([]);
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a full TMPDIR does not demote live because prove copies next to the database", async () => {
+  const tiny = mountTmpfs("256k");
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "prism-adopt-tmpdir-"));
+    const live = join(dir, "prism.db");
+    writeBootable(live, ["keep-live"]);
+    writeBootable(join(dir, "prism.restore"), ["fresh"]);
+    const result = await runAdopt(live, { TMPDIR: tiny, TMP: tiny });
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, adopted: true, path: live });
+    expect(visitorId(live)).toBe("fresh");
+    expect(visitorId(generations(live)[0]!)).toBe("keep-live");
+  } finally {
+    unmountTmpfs(tiny);
+  }
+}, { timeout: ADOPT_TIMEOUT });
+
+test("a full data volume during prove leaves live and pending untouched", async () => {
+  const volume = mountTmpfs("2m");
+  try {
+    const live = join(volume, "prism.db");
+    writeBootable(live, ["keep-live"]);
+    writeBootable(`${live}.previous.70`, ["keep-gen"]);
+    const pending = join(volume, "prism.restore");
+    writeBootable(pending, ["candidate"]);
+    fillUntil(volume, 24_576);
+    const before = readFileSync(live);
+
+    const result = await runAdopt(live);
+    expect(result.code, result.stderr).toBe(1);
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+    expect(String(JSON.parse(result.stdout).error)).toMatch(/ENOSPC|no space left/i);
+    expect(readFileSync(live)).toEqual(before);
+    expect(visitorId(live)).toBe("keep-live");
+    expect(existsSync(pending)).toBe(true);
+    expect(existsSync(`${live}.unbootable`)).toBe(false);
+    expect(existsSync(`${pending}.rejected`)).toBe(false);
+  } finally {
+    unmountTmpfs(volume);
+  }
 }, { timeout: ADOPT_TIMEOUT });

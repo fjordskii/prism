@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
-import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statfsSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,11 @@ export type AdoptResult =
   | { ok: true; adopted: false }
   | { ok: true; adopted: true; path: string }
   | { ok: false; error: string };
+
+type ProveResult =
+  | { ok: true }
+  | { ok: false; kind: "invalid"; error: string }
+  | { ok: false; kind: "env"; error: string };
 
 type CliResult = SnapshotResult | RestoreResult | AdoptResult;
 
@@ -570,8 +575,16 @@ function escapeRe(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function generationStamp(live: string, name: string): number | undefined {
+  const prefix = generationPrefix(live);
+  if (name === prefix) return 0;
+  const match = new RegExp(`^${escapeRe(prefix)}\\.(\\d+)$`).exec(name);
+  if (match === null || match[1] === undefined) return undefined;
+  return Number(match[1]);
+}
+
 function isGenerationName(live: string, name: string): boolean {
-  return new RegExp(`^${escapeRe(generationPrefix(live))}(?:\\.\\d+)?$`).test(name);
+  return generationStamp(live, name) !== undefined;
 }
 
 function listGenerations(live: string): string[] {
@@ -582,19 +595,19 @@ function listGenerations(live: string): string[] {
   } catch {
     return [];
   }
-  const found: { path: string; mtime: number }[] = [];
+  const found: { path: string; stamp: number }[] = [];
   for (const name of names) {
-    if (!isGenerationName(live, name)) continue;
+    const stamp = generationStamp(live, name);
+    if (stamp === undefined) continue;
     const path = join(dir, name);
     try {
-      const st = lstatSync(path);
-      if (!st.isFile()) continue;
-      found.push({ path, mtime: st.mtimeMs });
+      if (!lstatSync(path).isFile()) continue;
     } catch {
       continue;
     }
+    found.push({ path, stamp });
   }
-  found.sort((a, b) => b.mtime - a.mtime || b.path.localeCompare(a.path));
+  found.sort((a, b) => b.stamp - a.stamp || b.path.localeCompare(a.path));
   return found.map((row) => row.path);
 }
 
@@ -638,8 +651,50 @@ function displaceLive(live: string): string {
   const dest = nextGenerationPath(live);
   renameSync(live, dest);
   moveSidecars(live, dest);
-  pruneGenerations(live);
   return dest;
+}
+
+function injected(name: string): void {
+  if ((process.env.PRISM_ADOPT_INJECT ?? "") !== name) return;
+  const err = new Error("no space left on device");
+  (err as NodeJS.ErrnoException).code = "ENOSPC";
+  throw err;
+}
+
+function isEnvError(err: unknown): boolean {
+  const code = errorCode(err);
+  if (
+    code === "ENOSPC" || code === "EDQUOT" || code === "ENOMEM" || code === "EAGAIN"
+    || code === "EBUSY" || code === "EIO" || code === "EMFILE" || code === "ENFILE"
+    || code === "EACCES" || code === "EPERM" || code === "EROFS" || code === "ETIMEDOUT"
+  ) {
+    return true;
+  }
+  const text = errorMessage(err);
+  return /ENOSPC|EDQUOT|ENOMEM|no space left|disk I\/O error|SQLITE_FULL|SQLITE_IOERR|SQLITE_NOMEM|killed|timed out/i.test(text);
+}
+
+function databaseBytes(path: string): number {
+  let n = 0;
+  try {
+    n += lstatSync(path).size;
+  } catch {
+    return n;
+  }
+  for (const suffix of DB_SIDECARS) {
+    try {
+      const st = lstatSync(`${path}${suffix}`);
+      if (st.isFile()) n += st.size;
+    } catch {
+      continue;
+    }
+  }
+  return n;
+}
+
+function freeBytes(path: string): number {
+  const st = statfsSync(path);
+  return Number(st.bavail) * Number(st.bsize);
 }
 
 function quarantinePending(pending: string): void {
@@ -667,7 +722,7 @@ function proveEnv(dbPath: string): Record<string, string> {
   return out;
 }
 
-async function runProveBoot(dbPath: string): Promise<{ ok: true } | { ok: false; error: string }> {
+async function runProveBoot(dbPath: string): Promise<ProveResult> {
   const script = join(dirname(fileURLToPath(import.meta.url)), "prove-boot.ts");
   const child = Bun.spawn([process.execPath, script, dbPath], {
     cwd: dirname(dirname(script)),
@@ -676,7 +731,9 @@ async function runProveBoot(dbPath: string): Promise<{ ok: true } | { ok: false;
     stdout: "pipe",
     stderr: "pipe",
   });
+  let timedOut = false;
   const timer = setTimeout(() => {
+    timedOut = true;
     child.kill();
   }, PROVE_TIMEOUT_MS);
   try {
@@ -687,24 +744,44 @@ async function runProveBoot(dbPath: string): Promise<{ ok: true } | { ok: false;
     ]);
     if (code === 0) return { ok: true };
     const text = `${stderr}\n${stdout}`.replace(/\s+/g, " ").trim();
-    return { ok: false, error: text === "" ? "prove-boot failed" : text.slice(0, 500) };
+    const error = text === "" ? "prove-boot failed" : text.slice(0, 500);
+    if (
+      timedOut || code === null || code < 0 || code === 137 || code === 143
+      || /ENOSPC|EDQUOT|ENOMEM|no space left|disk I\/O error|SQLITE_FULL|SQLITE_IOERR|SQLITE_NOMEM|killed|timed out/i.test(error)
+    ) {
+      return { ok: false, kind: "env", error: timedOut ? `prove-boot timed out: ${error}` : error };
+    }
+    return { ok: false, kind: "invalid", error };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function proveCandidate(path: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const refused = inspectCandidate(path);
-  if (refused !== undefined) return { ok: false, error: refused };
-  const work = mkdtemp(join(tmpdir(), "prism-prove-"));
-  const copy = join(work, "copy.sqlite");
+async function proveCandidate(path: string): Promise<ProveResult> {
   try {
+    const refused = inspectCandidate(path);
+    if (refused !== undefined) return { ok: false, kind: "invalid", error: refused };
+  } catch (err) {
+    return { ok: false, kind: isEnvError(err) ? "env" : "invalid", error: errorMessage(err) };
+  }
+  let work: string | undefined;
+  try {
+    const dir = dirname(resolve(path));
+    const needed = databaseBytes(path) + 65_536;
+    if (freeBytes(dir) < needed) {
+      const err = new Error("no space left on device");
+      (err as NodeJS.ErrnoException).code = "ENOSPC";
+      throw err;
+    }
+    work = mkdtemp(join(dir, ".prism-prove-"));
+    const copy = join(work, "copy.sqlite");
+    injected("enospc-copy");
     copyDatabase(path, copy);
     return await runProveBoot(copy);
   } catch (err) {
-    return { ok: false, error: errorMessage(err) };
+    return { ok: false, kind: isEnvError(err) ? "env" : "invalid", error: errorMessage(err) };
   } finally {
-    rmSync(work, { recursive: true, force: true });
+    if (work !== undefined) rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -714,6 +791,10 @@ async function restoreGeneration(live: string, gen: string): Promise<boolean> {
   copyDatabase(gen, live);
   const proved = await proveCandidate(live);
   if (proved.ok) return true;
+  if (proved.kind === "env") {
+    process.stderr.write(`adopt: prove of restored generation deferred (${proved.error}); leaving copy in place\n`);
+    return true;
+  }
   if (isRegularFile(live)) {
     const dest = uniqueAside(live, "rejected");
     renameSync(live, dest);
@@ -726,14 +807,23 @@ async function ensureLive(live: string): Promise<void> {
   if (isRegularFile(live)) {
     const proved = await proveCandidate(live);
     if (proved.ok) return;
+    if (proved.kind === "env") {
+      process.stderr.write(`adopt: prove of live deferred (${proved.error}); leaving live in place\n`);
+      return;
+    }
     const gen = newestGeneration(live);
     process.stderr.write(
       `adopt: live database failed boot${gen === undefined ? "" : `; restoring ${gen}`}: ${proved.error}\n`,
     );
     if (gen === undefined) return;
-    quarantineLive(live);
-    if (!(await restoreGeneration(live, gen))) {
-      process.stderr.write(`adopt: newest generation also failed boot: ${gen}\n`);
+    const aside = quarantineLive(live);
+    try {
+      if (!(await restoreGeneration(live, gen))) {
+        process.stderr.write(`adopt: newest generation also failed boot: ${gen}\n`);
+      }
+    } catch (err) {
+      undoDisplace(live, aside);
+      throw err;
     }
     return;
   }
@@ -745,37 +835,75 @@ async function ensureLive(live: string): Promise<void> {
   }
 }
 
-async function adoptPending(dbPath: string): Promise<boolean> {
+function undoDisplace(live: string, gen: string): void {
+  if (!isRegularFile(gen)) return;
+  if (isRegularFile(live)) {
+    const dest = uniqueAside(live, "partial");
+    renameSync(live, dest);
+    moveSidecars(live, dest);
+  }
+  unlinkSidecars(live);
+  renameSync(gen, live);
+  moveSidecars(gen, live);
+}
+
+function swapIn(live: string, pending: string): void {
+  injected("enospc-swap");
+  let gen: string | undefined;
+  try {
+    if (isRegularFile(live)) gen = displaceLive(live);
+    injected("enospc-swap-after-displace");
+    unlinkSidecars(live);
+    try {
+      checkpointLive(pending);
+    } catch {
+      // Sidecars move with the candidate so a WAL-only schema still boots.
+    }
+    renameSync(pending, live);
+    moveSidecars(pending, live);
+    pruneGenerations(live);
+  } catch (err) {
+    if (gen !== undefined) undoDisplace(live, gen);
+    throw err;
+  }
+}
+
+async function adoptPending(dbPath: string): Promise<AdoptResult> {
   const pending = pendingPath(dbPath);
-  if (!isRegularFile(pending)) return false;
+  if (!isRegularFile(pending)) return { ok: true, adopted: false };
   const proved = await proveCandidate(pending);
   if (!proved.ok) {
+    if (proved.kind === "env") {
+      process.stderr.write(`adopt: prove deferred: ${proved.error}\n`);
+      return { ok: false, error: proved.error };
+    }
     process.stderr.write(`adopt: candidate failed boot check: ${proved.error}\n`);
     quarantinePending(pending);
-    return false;
+    return { ok: true, adopted: false };
   }
-  if (isRegularFile(dbPath)) displaceLive(dbPath);
-  unlinkSidecars(dbPath);
   try {
-    checkpointLive(pending);
-  } catch {
-    // Sidecars move with the candidate so a WAL-only schema still boots.
+    swapIn(dbPath, pending);
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) };
   }
-  renameSync(pending, dbPath);
-  moveSidecars(pending, dbPath);
   const liveOk = await proveCandidate(dbPath);
-  if (liveOk.ok) return true;
+  if (liveOk.ok) return { ok: true, adopted: true, path: dbPath };
+  if (liveOk.kind === "env") {
+    process.stderr.write(`adopt: prove of swapped live deferred (${liveOk.error}); leaving swapped file in place\n`);
+    return { ok: true, adopted: true, path: dbPath };
+  }
   process.stderr.write(`adopt: swapped database failed boot; restoring newest generation: ${liveOk.error}\n`);
   quarantineLive(dbPath);
   const gen = newestGeneration(dbPath);
   if (gen !== undefined) await restoreGeneration(dbPath, gen);
-  return false;
+  return { ok: true, adopted: false };
 }
 
 async function adoptClassified(dbPath: string): Promise<AdoptResult> {
-  const adopted = await adoptPending(dbPath);
+  const pending = await adoptPending(dbPath);
+  if (!pending.ok) return pending;
   await ensureLive(dbPath);
-  if (adopted && isRegularFile(dbPath)) return { ok: true, adopted: true, path: dbPath };
+  if (pending.adopted && isRegularFile(dbPath)) return { ok: true, adopted: true, path: dbPath };
   return { ok: true, adopted: false };
 }
 
