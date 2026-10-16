@@ -16,9 +16,7 @@ export type WriteKeyView = {
 const selectByKey = db.prepare("SELECT site FROM sites WHERE write_key = ?");
 const selectBySite = db.prepare("SELECT write_key FROM sites WHERE site = ?");
 const selectSite = db.prepare("SELECT site FROM sites WHERE site = ?");
-const insertSite = db.prepare(
-  "INSERT OR IGNORE INTO sites (site, plan, created_at, write_key) VALUES (?, ?, ?, ?)",
-);
+const listRegistered = db.prepare("SELECT site, write_key FROM sites");
 const fillKey = db.prepare(
   "UPDATE sites SET write_key = ? WHERE site = ? AND (write_key IS NULL OR write_key = '')",
 );
@@ -28,34 +26,14 @@ export function newWriteKey(): string {
   return "wk_" + Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64url");
 }
 
-function knownSlugs(): string[] {
-  const rows = db.prepare(
-    `SELECT site FROM sites
-     UNION SELECT DISTINCT site FROM variants
-     UNION SELECT DISTINCT site FROM events
-     UNION SELECT DISTINCT site FROM visitors
-     UNION SELECT DISTINCT site FROM orders`,
-  ).all() as { site: string }[];
-  return rows.map((row) => row.site);
-}
-
 export function issueSiteWriteKeys(): { issued: number } {
-  const plan = process.env.PRISM_PLAN ?? "selfhost";
-  const now = Date.now();
   let issued = 0;
   db.transaction(() => {
-    for (const site of knownSlugs()) {
-      if (!SITE_RE.test(site)) continue;
-      const row = selectBySite.get(site) as { write_key: string | null } | undefined;
-      if (!row) {
-        insertSite.run(site, plan, now, newWriteKey());
-        issued++;
-        continue;
-      }
-      if (!row.write_key) {
-        fillKey.run(newWriteKey(), site);
-        issued++;
-      }
+    const rows = listRegistered.all() as { site: string; write_key: string | null }[];
+    for (const row of rows) {
+      if (!SITE_RE.test(row.site) || row.write_key) continue;
+      fillKey.run(newWriteKey(), row.site);
+      issued++;
     }
   })();
   return { issued };
