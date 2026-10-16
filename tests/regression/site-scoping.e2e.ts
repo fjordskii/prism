@@ -167,6 +167,37 @@ async function expectNoAccessPage(url: string, jwt: string) {
     await page.waitForTimeout(500);
     expect(hits).toEqual([]);
     expect(await page.locator('body').innerText()).not.toContain('Site B secret');
+
+    // PRISM-040: the denied site is not in the list, so the browser would
+    // otherwise show the caller's first site as selected. Re-picking that
+    // option does not fire change, and the denied page stays put.
+    const picker = page.locator('#sitePicker');
+    expect(await picker.inputValue(), 'no-access picker selection').toBe('');
+    expect((await page.locator('#sitePicker option:checked').innerText()).trim()).toBe('Choose a site');
+    expect(await page.locator('#writeKeyBox').isVisible(), 'write key row on the no-access page').toBe(false);
+
+    const landed = page.waitForURL(/[?&]site=sitea(?:&|$)/);
+    const writeKey = page.waitForResponse((res) => res.url().includes('/api/sites/sitea/write-key') && res.request().method() === 'GET');
+    const moved = await page.evaluate(() => {
+      const select = document.getElementById('sitePicker') as HTMLSelectElement | null;
+      if (!select || select.value === 'sitea') return false;
+      select.value = 'sitea';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    });
+    expect(moved, 'choosing the first site from the no-access page').toBe(true);
+    await landed;
+    await page.getByText('Site A hero', { exact: true }).waitFor();
+    expect(await page.locator('body').innerText()).not.toContain('No access to this site.');
+    expect(await picker.inputValue()).toBe('sitea');
+
+    // PRISM-041: an editor can open the site, and still must not see the key.
+    expect((await writeKey).status()).toBe(403);
+    expect(await page.locator('#writeKeyBox').isVisible(), 'write key row for an editor').toBe(false);
+    expect(await page.getByRole('button', { name: 'Copy key' }).isVisible()).toBe(false);
+    expect(await page.getByRole('button', { name: 'Copy snippet' }).isVisible()).toBe(false);
+    expect(await page.getByRole('button', { name: 'Rotate' }).isVisible()).toBe(false);
+    expect(await page.locator('#writeKeyValue').inputValue()).toBe('');
   } finally {
     await browser.close();
   }
