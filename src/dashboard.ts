@@ -128,8 +128,18 @@ export function dashboard(boot: DashboardBoot): string {
   #preview .btn, #preview a.btn { display: inline-block; background: var(--ink); color: #fff; padding: 10px 22px; border-radius: 4px; text-decoration: none; font-size: 13px; letter-spacing: .04em; }
 
   .holdout-set { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 20px 0; }
+  /* flex would otherwise paint the row when it carries the hidden attribute */
+  .holdout-set[hidden] { display: none; }
   .holdout-set label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
   .holdout-set input { width: 72px; }
+  #writeKeyValue {
+    flex: 1 0 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
   #holdoutNote { font-size: 12px; color: var(--muted); }
   .exp h3 { margin: 0; font-size: 14px; }
   .exp .aud { color: var(--muted); font-weight: 500; }
@@ -247,14 +257,24 @@ let site = boot.site;
 const qs = new URLSearchParams(location.search);
 const token = qs.get('token');
 const picker = document.getElementById('sitePicker');
+if (!boot.sites.includes(site)) {
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = 'Choose a site';
+  blank.disabled = true;
+  blank.selected = true;
+  picker.appendChild(blank);
+}
 for (const s of boot.sites) {
   const o = document.createElement('option');
   o.value = s; o.textContent = s; if (s === site) o.selected = true;
   picker.appendChild(o);
 }
 document.getElementById('sitePicker').addEventListener('change', e => {
+  const next = e.target.value;
+  if (!next) return;
   const p = new URLSearchParams(location.search);
-  p.set('site', e.target.value);
+  p.set('site', next);
   location.search = p.toString();
 });
 document.getElementById('addSite').addEventListener('click', () => {
